@@ -1,0 +1,22 @@
+{
+  "name": "foodland-live-commerce",
+  "version": "1.0.0",
+  "description": "Foodland live purchase social proof service for Railway",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "imapflow": "^1.0.181",
+    "mailparser": "^3.7.2",
+    "pg": "^8.13.1"
+  }
+}
