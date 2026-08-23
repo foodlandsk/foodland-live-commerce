@@ -166,21 +166,40 @@ function parseQuantity(context) {
   return 1;
 }
 
-function findImageNearAnchor($, a) {
-  let node = $(a);
-  for (let i = 0; i < 4 && node.length; i++) {
-    const img = node.find('img[src]').first();
-    if (img.length) {
-      const src = img.attr('src');
+function findImageForProduct($, a) {
+  const anchor = $(a);
+
+  // Prefer the exact table row containing this product title.
+  // This prevents assigning the previous product's image to the next one.
+  const row = anchor.closest('tr');
+  if (row.length) {
+    const imgs = row.find('img[src]').toArray();
+
+    for (const img of imgs) {
+      const src = $(img).attr('src');
+      if (src && /foodland\.sk/i.test(src) && /product_order_mail_thumb/i.test(src)) {
+        return src;
+      }
+    }
+
+    for (const img of imgs) {
+      const src = $(img).attr('src');
       if (src && /foodland\.sk/i.test(src)) return src;
     }
-    const prevImg = node.prev().find('img[src]').first();
-    if (prevImg.length) {
-      const src = prevImg.attr('src');
-      if (src && /foodland\.sk/i.test(src)) return src;
-    }
-    node = node.parent();
   }
+
+  // Fallback only within the nearest product table. Never use previous siblings.
+  const table = anchor.closest('table');
+  if (table.length) {
+    const imgs = table.find('img[src]').toArray();
+    for (const img of imgs) {
+      const src = $(img).attr('src');
+      if (src && /foodland\.sk/i.test(src) && /product_order_mail_thumb/i.test(src)) {
+        return src;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -207,7 +226,7 @@ function extractProducts(html = '') {
     products.push({
       product_name: text,
       product_url: productUrl,
-      image_url: findImageNearAnchor($, a),
+      image_url: findImageForProduct($, a),
       quantity: parseQuantity(context)
     });
   });
@@ -326,6 +345,7 @@ app.get('/health', async (_req, res) => {
     res.json({
       ok: true,
       service: 'foodland-live-commerce',
+      version: '1.3.0',
       mailbox: process.env.MAIL_USER ? 'configured' : 'missing',
       pollSeconds: POLL_SECONDS,
       time: new Date().toISOString()
@@ -346,7 +366,7 @@ app.get('/api/live/recent', async (req, res) => {
       image_url,
       quantity,
       ordered_at,
-      EXTRACT(EPOCH FROM (NOW() - ordered_at)) / 60 AS minutes_ago
+      GREATEST(0, ROUND(EXTRACT(EPOCH FROM (NOW() - ordered_at)) / 60))::int AS minutes_ago
     FROM purchase_events
     WHERE ordered_at >= NOW() - ($1::text || ' hours')::interval
     ORDER BY ordered_at DESC
@@ -430,9 +450,39 @@ app.get('/widget.js', (_req, res) => {
     });
   }
 
-  function minsLabel(n) {
+  function relativeLabel(n) {
     const v = Math.max(1, Math.round(Number(n || 1)));
-    return dict.ago.replace('{n}', v);
+
+    if (v < 60) {
+      return dict.ago.replace('{n}', v);
+    }
+
+    const hours = Math.round(v / 60);
+    if (hours < 24) {
+      const hourText = {
+        sk: 'pred {n} h',
+        cz: 'před {n} h',
+        de: 'vor {n} Std.',
+        en: '{n} h ago',
+        pl: '{n} godz. temu',
+        hu: '{n} órája',
+        vi: '{n} giờ trước'
+      }[lang];
+      return hourText.replace('{n}', hours);
+    }
+
+    const days = Math.round(hours / 24);
+    const dayText = {
+      sk: days === 1 ? 'včera' : 'pred {n} dňami',
+      cz: days === 1 ? 'včera' : 'před {n} dny',
+      de: days === 1 ? 'gestern' : 'vor {n} Tagen',
+      en: days === 1 ? 'yesterday' : '{n} days ago',
+      pl: days === 1 ? 'wczoraj' : '{n} dni temu',
+      hu: days === 1 ? 'tegnap' : '{n} napja',
+      vi: days === 1 ? 'hôm qua' : '{n} ngày trước'
+    }[lang];
+
+    return dayText.replace('{n}', days);
   }
 
   async function load() {
@@ -453,7 +503,7 @@ app.get('/widget.js', (_req, res) => {
           html:
             '<strong>' + esc(dict.recent) + ':</strong> ' +
             esc(x.product_name) +
-            ' <span style="opacity:.75">· ' + esc(minsLabel(x.minutes_ago)) + '</span>'
+            ' <span style="opacity:.75">· ' + esc(relativeLabel(x.minutes_ago)) + '</span>'
         });
       });
 
