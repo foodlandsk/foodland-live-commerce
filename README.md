@@ -1,58 +1,108 @@
-# Foodland Live Commerce v1
+# Foodland Live Commerce
 
-Service for Railway that:
+Live purchase/social-proof backend for Foodland.sk.
 
-1. Connects by IMAP to `orders-live@foodland.sk`.
-2. Reads Foodland order confirmation e-mails.
-3. Extracts only anonymized purchase data:
-   - order hash
-   - order date/time
-   - product name
-   - product URL
-   - image URL (when available)
-   - quantity
-4. Stores the events in PostgreSQL.
-5. Exposes public JSON endpoints for Foodland.
-6. Serves `/widget.js` for the Foodland Infowidget.
+## What it does
 
-## Railway setup
+- reads forwarded Foodland order confirmations from a dedicated Websupport mailbox via IMAP;
+- extracts product name, product URL, product image, quantity and order time;
+- hashes the order number to prevent duplicates;
+- does **not** persist customer name, e-mail, phone or delivery address;
+- stores anonymized purchase events in PostgreSQL;
+- exposes recent purchases and 24h/7d product statistics;
+- serves a multilingual JavaScript widget for the Foodland Infowidget.
 
-### 1. Create project
-Deploy this repository to Railway.
+## Repository structure
 
-### 2. Add PostgreSQL
-In Railway:
-- New -> Database -> PostgreSQL
-- Railway will inject `DATABASE_URL`.
+```text
+foodland-live-commerce/
+├── src/
+│   └── index.js
+├── .env.example
+├── .gitignore
+├── package.json
+├── Procfile
+├── railway.json
+├── README.md
+└── SECURITY.md
+```
 
-### 3. Variables
+## Deploy to Railway
+
+### 1. GitHub
+
+Create a private repository named:
+
+`foodland-live-commerce`
+
+Upload the **contents of this folder** to the repository root.
+
+Do not upload a `.env` file and never put passwords into GitHub.
+
+### 2. Railway
+
+Create a Railway project from the GitHub repository.
+
+Add a PostgreSQL service to the same Railway project. Railway normally
+provides `DATABASE_URL` to the application when the database is connected.
+
+### 3. Railway Variables
+
 Set:
 
-- `MAIL_HOST=imap.websupport.sk`
-- `MAIL_PORT=993`
-- `MAIL_SECURE=true`
-- `MAIL_USER=orders-live@foodland.sk`
-- `MAIL_PASSWORD=<password of the technical mailbox>`
-- `MAIL_FOLDER=INBOX`
-- `POLL_SECONDS=60`
-- `PGSSL=true`
-- `ALLOWED_ORIGINS=https://www.foodland.sk,https://foodland.sk`
-- `ADMIN_TOKEN=<long random secret>`
+```text
+MAIL_HOST=imap.websupport.sk
+MAIL_PORT=993
+MAIL_SECURE=true
+MAIL_USER=orders-live@foodland.sk
+MAIL_PASSWORD=YOUR_TECHNICAL_MAILBOX_PASSWORD
+MAIL_FOLDER=INBOX
 
-Do not put the mailbox password into GitHub.
+POLL_SECONDS=60
+PROCESS_UNSEEN_ONLY=true
 
-### 4. Test
+PGSSL=true
+ALLOWED_ORIGINS=https://www.foodland.sk,https://foodland.sk
+
+ADMIN_TOKEN=GENERATE_A_LONG_RANDOM_SECRET
+RECENT_MAX_AGE_HOURS=48
+```
+
+`PORT` is supplied by Railway.
+
+### 4. Verify deployment
+
 Open:
 
-- `/health`
-- `/api/live/recent`
-- `/api/live/summary`
+```text
+https://YOUR-RAILWAY-DOMAIN.up.railway.app/health
+```
 
-The service creates its database tables automatically on startup.
+Expected result:
+
+```json
+{
+  "ok": true,
+  "service": "foodland-live-commerce",
+  "mailbox": "configured"
+}
+```
+
+Then test:
+
+```text
+https://YOUR-RAILWAY-DOMAIN.up.railway.app/api/live/recent
+```
+
+and:
+
+```text
+https://YOUR-RAILWAY-DOMAIN.up.railway.app/api/live/summary
+```
 
 ## Foodland Infowidget
 
-In the HTML source of the Infowidget insert:
+After the backend is working, add this in the Infowidget HTML source:
 
 ```html
 <span
@@ -62,31 +112,77 @@ In the HTML source of the Infowidget insert:
   Práve obľúbené produkty našich zákazníkov
 </span>
 
-<script src="https://YOUR-RAILWAY-DOMAIN.up.railway.app/widget.js" defer></script>
+<script
+  src="https://YOUR-RAILWAY-DOMAIN.up.railway.app/widget.js"
+  defer>
+</script>
 ```
 
-The widget rotates recent anonymized purchases.
+Supported storefront languages:
 
-## Supported languages
+- SK
+- CZ/CS
+- DE
+- EN
+- PL
+- HU
+- VI
 
-The widget auto-detects:
-SK, CZ/CS, DE, EN, PL, HU, VI.
+## Public endpoints
 
-## Privacy
+### `GET /health`
 
-The service deliberately does not store:
-- customer name
-- e-mail
-- telephone
-- street
-- exact delivery address
+Application/database health.
 
-Only purchase/product information is stored.
+### `GET /api/live/recent`
 
-## Manual re-scan
+Recent anonymized purchase events.
 
-POST `/admin/rescan` with header:
+Optional parameters:
 
-`x-admin-token: YOUR_ADMIN_TOKEN`
+- `limit`
+- `hours`
 
-This is useful if you want to process older messages as well.
+### `GET /api/live/summary`
+
+Aggregated product popularity for the last 24 hours and 7 days.
+
+### `GET /widget.js`
+
+Foodland Infowidget client.
+
+## Admin endpoint
+
+`POST /admin/rescan`
+
+Requires:
+
+```text
+x-admin-token: YOUR_ADMIN_TOKEN
+```
+
+This can rescan recent mailbox messages. Keep the token secret.
+
+## Production workflow
+
+```text
+Creative Sites order
+        ↓
+eshop@foodland.sk
+        ↓ mail filter / copy
+orders-live@foodland.sk
+        ↓ IMAP
+Foodland Live Commerce
+        ↓
+PostgreSQL
+        ↓
+API + widget.js
+        ↓
+Foodland Infowidget
+```
+
+## Important
+
+Start with test orders. Verify that the parser correctly extracts the
+real HTML generated by Creative Sites before relying on the data for
+public social proof.
