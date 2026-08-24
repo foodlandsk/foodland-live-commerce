@@ -10,7 +10,7 @@ import { pathToFileURL } from 'url';
 
 const { Pool } = pg;
 
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -191,19 +191,74 @@ function findImageForProduct($, a) {
     }
   }
 
-  // Fallback only within the nearest product table. Never use previous siblings.
-  const table = anchor.closest('table');
-  if (table.length) {
-    const imgs = table.find('img[src]').toArray();
-    for (const img of imgs) {
-      const src = $(img).attr('src');
-      if (src && /foodland\.sk/i.test(src) && /product_order_mail_thumb/i.test(src)) {
-        return src;
-      }
+  // Never fall back to the first image in the surrounding table. Some Creative
+  // Sites e-mails use one large table for the complete order, which assigned
+  // the first product image to every following product.
+  return null;
+}
+
+function extractProductPageImage(html = '', productUrl = '') {
+  if (!html) return null;
+  const $ = cheerio.load(html);
+  const raw =
+    $('meta[property="og:image"]').attr('content') ||
+    $('meta[name="twitter:image"]').attr('content') ||
+    $('link[rel="image_src"]').attr('href');
+
+  if (!raw) return null;
+
+  try {
+    const imageUrl = new URL(raw, productUrl);
+    if (!/(^|\.)foodland\.sk$/i.test(imageUrl.hostname)) return null;
+    return imageUrl.toString();
+  } catch {
+    return null;
+  }
+}
+
+const productImageCache = new Map();
+
+async function resolveProductPageImage(productUrl) {
+  if (productImageCache.has(productUrl)) return productImageCache.get(productUrl);
+
+  let imageUrl = null;
+  try {
+    const response = await fetch(productUrl, {
+      signal: AbortSignal.timeout(10000),
+      headers: { 'user-agent': `Foodland-Live-Commerce/${VERSION}` }
+    });
+    if (response.ok) {
+      imageUrl = extractProductPageImage(await response.text(), productUrl);
     }
+  } catch (e) {
+    console.warn('Product image lookup failed:', { productUrl, error: e.message });
   }
 
-  return null;
+  productImageCache.set(productUrl, imageUrl);
+  return imageUrl;
+}
+
+async function repairAmbiguousProductImages(products) {
+  const counts = new Map();
+  for (const p of products) {
+    if (p.image_url) counts.set(p.image_url, (counts.get(p.image_url) || 0) + 1);
+  }
+
+  const repaired = products.map(p => ({ ...p }));
+  const candidates = repaired
+    .map((product, index) => ({ product, index }))
+    .filter(({ product }) => !product.image_url || (counts.get(product.image_url) || 0) > 1);
+
+  // Keep the product site load modest during a large 30-day admin rescan.
+  for (let i = 0; i < candidates.length; i += 4) {
+    const batch = candidates.slice(i, i + 4);
+    const images = await Promise.all(batch.map(({ product }) => resolveProductPageImage(product.product_url)));
+    images.forEach((imageUrl, index) => {
+      if (imageUrl) repaired[batch[index].index].image_url = imageUrl;
+    });
+  }
+
+  return repaired;
 }
 
 function extractProducts(html = '') {
@@ -295,57 +350,83 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
   pollRunning = true;
 
   const client = new ImapFlow(imapConfig());
+  const pendingOrders = [];
   let processed = 0;
   let inserted = 0;
   let updated = 0;
 
+  // ImapFlow emits connection failures as EventEmitter errors in addition to
+  // rejecting the active operation. Without a listener, a Websupport timeout
+  // can terminate the complete Node process.
+  client.on('error', error => {
+    console.error('IMAP client error:', {
+      code: error.code,
+      message: error.message,
+      connectionId: error._connId
+    });
+  });
+
   try {
-    await client.connect();
-    const lock = await client.getMailboxLock(MAIL_FOLDER);
     try {
-      const query = unseenOnly
-        ? { seen: false }
-        : { since: new Date(Date.now() - 30 * 24 * 3600 * 1000) };
+      await client.connect();
+      const lock = await client.getMailboxLock(MAIL_FOLDER);
+      try {
+        const query = unseenOnly
+          ? { seen: false }
+          : { since: new Date(Date.now() - 30 * 24 * 3600 * 1000) };
 
-      for await (const msg of client.fetch(query, { uid: true, envelope: true, source: true, flags: true })) {
-        const subject = msg.envelope?.subject || '';
+        for await (const msg of client.fetch(query, { uid: true, envelope: true, source: true, flags: true })) {
+          const subject = msg.envelope?.subject || '';
 
-        if (!/Potvrdenie objednávky|objednávk/i.test(subject)) {
-          continue;
-        }
-
-        const parsed = await simpleParser(msg.source);
-        const plain = parsed.text || '';
-        const html = typeof parsed.html === 'string' ? parsed.html : '';
-
-        const orderNumber = parseOrderNumber(subject, plain);
-        const orderedAt = parseOrderDate(subject, plain, parsed.date || msg.envelope?.date);
-        const products = extractProducts(html);
-
-        if (orderNumber && products.length) {
-          const saved = await saveOrder({ orderNumber, orderedAt, products });
-          inserted += saved.inserted;
-          updated += saved.updated;
-          processed++;
-
-          // Mark only successfully parsed order messages as seen.
-          if (!msg.flags?.has('\\Seen')) {
-            await client.messageFlagsAdd({ uid: msg.uid }, ['\\Seen'], { uid: true });
+          if (!/Potvrdenie objednávky|objednávk/i.test(subject)) {
+            continue;
           }
-        } else {
-          console.warn('Order mail not parsed:', {
-            uid: msg.uid,
-            subject,
-            orderNumber,
-            products: products.length
-          });
+
+          const parsed = await simpleParser(msg.source);
+          const plain = parsed.text || '';
+          const html = typeof parsed.html === 'string' ? parsed.html : '';
+
+          const orderNumber = parseOrderNumber(subject, plain);
+          const orderedAt = parseOrderDate(subject, plain, parsed.date || msg.envelope?.date);
+          const products = extractProducts(html);
+
+          if (orderNumber && products.length) {
+            // Store parsed data in memory and close IMAP before making product
+            // page HTTP requests. This prevents the mailbox socket from idling
+            // until Websupport terminates it during a large admin rescan.
+            pendingOrders.push({ orderNumber, orderedAt, products });
+
+            // Parsing succeeded, so a normal poll does not need to download the
+            // same message again. Admin rescan uses seen and unseen messages.
+            if (!msg.flags?.has('\\Seen')) {
+              await client.messageFlagsAdd({ uid: msg.uid }, ['\\Seen'], { uid: true });
+            }
+          } else {
+            console.warn('Order mail not parsed:', {
+              uid: msg.uid,
+              subject,
+              orderNumber,
+              products: products.length
+            });
+          }
         }
+      } finally {
+        lock.release();
       }
     } finally {
-      lock.release();
+      try { await client.logout(); } catch {}
+    }
+
+    // Slow product-page lookups and database UPSERTs happen only after the
+    // mailbox connection has been released.
+    for (const order of pendingOrders) {
+      const products = await repairAmbiguousProductImages(order.products);
+      const saved = await saveOrder({ ...order, products });
+      inserted += saved.inserted;
+      updated += saved.updated;
+      processed++;
     }
   } finally {
-    try { await client.logout(); } catch {}
     pollRunning = false;
   }
 
@@ -587,4 +668,12 @@ if (isDirectRun) {
   });
 }
 
-export { app, extractProducts, findImageForProduct, saveOrder, VERSION };
+export {
+  app,
+  extractProducts,
+  extractProductPageImage,
+  findImageForProduct,
+  repairAmbiguousProductImages,
+  saveOrder,
+  VERSION
+};

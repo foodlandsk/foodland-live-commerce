@@ -205,6 +205,6 @@ Verify:
 /api/live/recent
 ```
 
-`/health` should include `"version":"1.4.0"`.
+`/health` should include `"version":"1.4.1"`.
 
-Run `POST /admin/rescan` once after deployment. Existing purchase rows are then updated by UPSERT, so corrected `image_url` values are applied without a database migration.
+Run `POST /admin/rescan` once after deployment. Existing purchase rows are then updated by UPSERT. Ambiguous e-mail images are resolved from the corresponding product page, so corrected `image_url` values are applied without a database migration.

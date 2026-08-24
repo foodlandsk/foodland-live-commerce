@@ -1,9 +1,18 @@
 # Changelog
 
+## v1.4.1
+
+- Fixed Websupport IMAP `ETIMEOUT` crashes during admin rescan.
+- Order e-mails are now parsed and the IMAP connection is closed before slow product-page image lookups and database UPSERTs begin.
+- Added an explicit ImapFlow error listener so a connection error cannot terminate the Node process as an unhandled EventEmitter error.
+- `/health` now reports version `1.4.1`.
+
 ## v1.4
 
 - Replaced the purchase-event conflict no-op with an UPSERT.
 - Admin rescan now repairs existing rows, including previously mismatched `image_url` values.
+- Removed the whole-order-table image fallback that assigned the first product image to every item.
+- Missing or duplicated e-mail images are resolved from each product page's `og:image` metadata.
 - A rescan never replaces an existing image with `NULL` when a message has no usable image.
 - Admin rescan responses now report separate `inserted` and `updated` counts.
 - Added regression tests for product-row image matching, UPSERT safety, and the Infowidget client.
