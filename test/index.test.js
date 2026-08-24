@@ -70,6 +70,17 @@ test('historical scans are bounded and stored images have a direct repair endpoi
   assert.match(source, /scan: scanStatus/);
 });
 
+test('messages are marked seen only after the IMAP fetch iterator finishes', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
+  const fetchAt = source.indexOf('for await (const msg of client.fetch');
+  const collectAt = source.indexOf('seenUids.push(msg.uid)');
+  const markAt = source.indexOf('await client.messageFlagsAdd({ uid }');
+  assert.ok(fetchAt > 0);
+  assert.ok(collectAt > fetchAt);
+  assert.ok(markAt > collectAt);
+  assert.equal(source.slice(fetchAt, collectAt).includes('await client.messageFlagsAdd'), false);
+});
+
 test('Infowidget JavaScript is served and contains the multilingual client', async (t) => {
   const server = app.listen(0);
   t.after(() => server.close());
@@ -81,7 +92,10 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /javascript/);
   assert.match(body, /foodland-live-commerce/);
+  assert.match(body, /data-foodland-live-commerce/);
+  assert.match(body, /dataset\.mode/);
+  assert.match(body, /targets\.forEach/);
   assert.match(body, /Vừa được mua/);
   assert.match(body, /api\/live\/recent/);
-  assert.equal(VERSION, '1.4.2');
+  assert.equal(VERSION, '1.4.4');
 });

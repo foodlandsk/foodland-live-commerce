@@ -10,7 +10,7 @@ import { pathToFileURL } from 'url';
 
 const { Pool } = pg;
 
-const VERSION = '1.4.2';
+const VERSION = '1.4.4';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -365,6 +365,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
 
   const client = new ImapFlow(imapConfig());
   const pendingOrders = [];
+  const seenUids = [];
   let processed = 0;
   let inserted = 0;
   let updated = 0;
@@ -411,10 +412,11 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
             pendingOrders.push({ orderNumber, orderedAt, products });
             scanStatus.pending_orders = pendingOrders.length;
 
-            // Parsing succeeded, so a normal poll does not need to download the
-            // same message again. Admin rescan uses seen and unseen messages.
+            // Never issue another IMAP command inside the active fetch stream.
+            // ImapFlow can deadlock when messageFlagsAdd runs before the fetch
+            // iterator finishes. Collect UIDs and mark them afterwards.
             if (!msg.flags?.has('\\Seen')) {
-              await client.messageFlagsAdd({ uid: msg.uid }, ['\\Seen'], { uid: true });
+              seenUids.push(msg.uid);
             }
           } else {
             console.warn('Order mail not parsed:', {
@@ -424,6 +426,11 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
               products: products.length
             });
           }
+        }
+
+        scanStatus.phase = 'mark-seen';
+        for (const uid of seenUids) {
+          await client.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true });
         }
       } finally {
         lock.release();
@@ -592,13 +599,18 @@ app.get('/widget.js', (_req, res) => {
   res.set('Cache-Control', 'public, max-age=300');
   res.send(String.raw`
 (function () {
-  const el = document.getElementById('foodland-live-commerce');
-  if (!el) return;
+  const targets = Array.from(new Set([
+    ...document.querySelectorAll('[data-foodland-live-commerce]'),
+    ...document.querySelectorAll('#foodland-live-commerce')
+  ]));
+  if (!targets.length) return;
 
-  const api = (el.dataset.api || '').replace(/\/$/, '');
+  const config = targets.find(function (target) { return target.dataset.api; }) || targets[0];
+  const api = (config.dataset.api || '').replace(/\/$/, '');
   if (!api) return;
 
-  const interval = Math.max(8000, Number(el.dataset.interval || 12000));
+  const interval = Math.max(8000, Number(config.dataset.interval || 12000));
+  const mode = config.dataset.mode === 'recent' ? 'recent' : 'mixed';
 
   const langRaw = (document.documentElement.lang || 'sk').toLowerCase();
   const lang = langRaw.startsWith('cs') ? 'cz' :
@@ -663,11 +675,13 @@ app.get('/widget.js', (_req, res) => {
     try {
       const [recentRes, summaryRes] = await Promise.all([
         fetch(api + '/api/live/recent?limit=12&hours=48', { cache: 'no-store' }),
-        fetch(api + '/api/live/summary', { cache: 'no-store' })
+        mode === 'recent'
+          ? Promise.resolve(null)
+          : fetch(api + '/api/live/summary', { cache: 'no-store' })
       ]);
 
       const recent = (await recentRes.json()).items || [];
-      const summary = (await summaryRes.json()).items || [];
+      const summary = summaryRes ? (await summaryRes.json()).items || [] : [];
 
       const messages = [];
 
@@ -701,10 +715,12 @@ app.get('/widget.js', (_req, res) => {
 
       function render() {
         const m = messages[i % messages.length];
-        el.innerHTML =
-          '<a href="' + esc(m.href) + '" style="color:inherit;text-decoration:none">' +
-          m.html +
-          '</a>';
+        targets.forEach(function (target) {
+          target.innerHTML =
+            '<a href="' + esc(m.href) + '" style="color:inherit;text-decoration:none">' +
+            m.html +
+            '</a>';
+        });
         i++;
       }
 

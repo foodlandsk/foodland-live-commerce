@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.4.4
+
+- The Infowidget client now supports multiple synchronized targets using the `data-foodland-live-commerce` attribute.
+- A duplicated live-order message can be placed in both halves of a seamless CSS ticker without duplicate IDs.
+- Added `data-mode="recent"` for tickers that should rotate only the latest orders and omit popularity summaries.
+- The original single `#foodland-live-commerce` integration remains backward compatible.
+- `/health` now reports version `1.4.4`.
+
+## v1.4.3
+
+- Fixed an ImapFlow deadlock caused by calling `messageFlagsAdd` inside an active `client.fetch()` iterator.
+- Successfully parsed message UIDs are now collected during fetch and marked as seen only after the fetch stream finishes.
+- `/health` now reports version `1.4.3`.
+
 ## v1.4.2
 
 - Added `POST /admin/repair-images?hours=48` to repair stored image URLs directly from product-page metadata without rescanning IMAP.

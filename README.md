@@ -132,6 +132,29 @@ Supported storefront languages:
 - HU
 - VI
 
+### Live order inside a seamless ticker
+
+For a CSS ticker that duplicates its messages, add the attribute
+`data-foodland-live-commerce` to the live-order item in both halves. Put
+`data-api` and `data-interval` on the first copy. The client updates every
+matching item at the same time, so both ticker halves retain identical widths.
+
+```html
+<span
+  data-foodland-live-commerce
+  data-api="https://YOUR-RAILWAY-DOMAIN.up.railway.app"
+  data-mode="recent"
+  data-interval="12000">
+  Loading latest order…
+</span>
+<span data-foodland-live-commerce>Loading latest order…</span>
+
+<script
+  src="https://YOUR-RAILWAY-DOMAIN.up.railway.app/widget.js"
+  defer>
+</script>
+```
+
 ## Public endpoints
 
 ### `GET /health`
@@ -209,6 +232,6 @@ Verify:
 /api/live/recent
 ```
 
-`/health` should include `"version":"1.4.2"`.
+`/health` should include `"version":"1.4.3"`.
 
 Run `POST /admin/rescan` once after deployment. Existing purchase rows are then updated by UPSERT. Ambiguous e-mail images are resolved from the corresponding product page, so corrected `image_url` values are applied without a database migration.
