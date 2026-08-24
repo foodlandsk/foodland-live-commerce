@@ -155,6 +155,24 @@ matching item at the same time, so both ticker halves retain identical widths.
 </script>
 ```
 
+### Compact live-order cards in a prefooter
+
+Use `data-layout="cards"` on a horizontally scrollable container. The client
+renders up to 12 recent purchases with each product's own `image_url`, product
+link, localized relative time and two-line product name. The container CSS stays
+in CreativeSites; load `widget.js` separately through GTM.
+
+```html
+<div
+  class="fl-live-cards"
+  data-foodland-live-commerce
+  data-api="https://YOUR-RAILWAY-DOMAIN.up.railway.app"
+  data-mode="recent"
+  data-layout="cards">
+  Loading latest orders…
+</div>
+```
+
 ## Public endpoints
 
 ### `GET /health`

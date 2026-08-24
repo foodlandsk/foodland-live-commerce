@@ -1,6 +1,6 @@
 {
   "name": "foodland-live-commerce",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Foodland live purchase social proof service for Railway",
   "main": "src/index.js",
   "type": "module",

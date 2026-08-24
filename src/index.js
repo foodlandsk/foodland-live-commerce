@@ -10,7 +10,7 @@ import { pathToFileURL } from 'url';
 
 const { Pool } = pg;
 
-const VERSION = '1.4.4';
+const VERSION = '1.4.5';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -611,6 +611,8 @@ app.get('/widget.js', (_req, res) => {
 
   const interval = Math.max(8000, Number(config.dataset.interval || 12000));
   const mode = config.dataset.mode === 'recent' ? 'recent' : 'mixed';
+  const cardTargets = targets.filter(function (target) { return target.dataset.layout === 'cards'; });
+  const textTargets = targets.filter(function (target) { return target.dataset.layout !== 'cards'; });
 
   const langRaw = (document.documentElement.lang || 'sk').toLowerCase();
   const lang = langRaw.startsWith('cs') ? 'cz' :
@@ -671,6 +673,45 @@ app.get('/widget.js', (_req, res) => {
     return dayText.replace('{n}', days);
   }
 
+  let messages = [];
+  let messageIndex = 0;
+  let messageTimer = null;
+
+  function renderCards(recent) {
+    if (!cardTargets.length) return;
+
+    const cards = recent.slice(0, 12).map(function (x) {
+      const media = x.image_url
+        ? '<img src="' + esc(x.image_url) + '" alt="" loading="lazy" decoding="async">'
+        : '<span class="fl-live-cards__placeholder" aria-hidden="true">🛒</span>';
+
+      return (
+        '<a class="fl-live-cards__card" href="' + esc(x.product_url) + '">' +
+          '<span class="fl-live-cards__media">' + media + '</span>' +
+          '<span class="fl-live-cards__copy">' +
+            '<span class="fl-live-cards__meta">' + esc(dict.recent) + ' · ' + esc(relativeLabel(x.minutes_ago)) + '</span>' +
+            '<strong class="fl-live-cards__name">' + esc(x.product_name) + '</strong>' +
+          '</span>' +
+        '</a>'
+      );
+    }).join('');
+
+    if (!cards) return;
+    cardTargets.forEach(function (target) { target.innerHTML = cards; });
+  }
+
+  function renderMessage() {
+    if (!messages.length || !textTargets.length) return;
+    const m = messages[messageIndex % messages.length];
+    textTargets.forEach(function (target) {
+      target.innerHTML =
+        '<a href="' + esc(m.href) + '" style="color:inherit;text-decoration:none">' +
+        m.html +
+        '</a>';
+    });
+    messageIndex++;
+  }
+
   async function load() {
     try {
       const [recentRes, summaryRes] = await Promise.all([
@@ -683,10 +724,12 @@ app.get('/widget.js', (_req, res) => {
       const recent = (await recentRes.json()).items || [];
       const summary = summaryRes ? (await summaryRes.json()).items || [] : [];
 
-      const messages = [];
+      const nextMessages = [];
+
+      renderCards(recent);
 
       recent.forEach(x => {
-        messages.push({
+        nextMessages.push({
           href: x.product_url,
           html:
             '<strong>' + esc(dict.recent) + ':</strong> ' +
@@ -699,7 +742,7 @@ app.get('/widget.js', (_req, res) => {
         .filter(x => Number(x.customers_24h || 0) >= 4)
         .slice(0, 6)
         .forEach(x => {
-          messages.push({
+          nextMessages.push({
             href: x.product_url,
             html:
               '<strong>' + esc(x.product_name) + '</strong> ' +
@@ -709,29 +752,21 @@ app.get('/widget.js', (_req, res) => {
           });
         });
 
-      if (!messages.length) return;
+      if (!nextMessages.length) return;
 
-      let i = Math.floor(Math.random() * messages.length);
-
-      function render() {
-        const m = messages[i % messages.length];
-        targets.forEach(function (target) {
-          target.innerHTML =
-            '<a href="' + esc(m.href) + '" style="color:inherit;text-decoration:none">' +
-            m.html +
-            '</a>';
-        });
-        i++;
+      messages = nextMessages;
+      if (!messageTimer && textTargets.length) {
+        messageIndex = Math.floor(Math.random() * messages.length);
+        renderMessage();
+        messageTimer = setInterval(renderMessage, interval);
       }
-
-      render();
-      setInterval(render, interval);
     } catch (e) {
       console.warn('Foodland Live Commerce widget:', e);
     }
   }
 
   load();
+  if (cardTargets.length) setInterval(load, 60000);
 })();
 `);
 });

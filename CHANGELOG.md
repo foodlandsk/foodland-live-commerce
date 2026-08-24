@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.5
+
+- Added a compact, image-based `data-layout="cards"` mode for full-width prefooter modules.
+- Live-order cards use the matching product URL and repaired product image from `/api/live/recent`.
+- Card rows support native horizontal touch scrolling while existing ticker/text targets remain backward compatible.
+- Card data refreshes every 60 seconds without restarting the rotating text timer.
+
 ## v1.4.4
 
 - The Infowidget client now supports multiple synchronized targets using the `data-foodland-live-commerce` attribute.
