@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4
+
+- Replaced the purchase-event conflict no-op with an UPSERT.
+- Admin rescan now repairs existing rows, including previously mismatched `image_url` values.
+- A rescan never replaces an existing image with `NULL` when a message has no usable image.
+- Admin rescan responses now report separate `inserted` and `updated` counts.
+- Added regression tests for product-row image matching, UPSERT safety, and the Infowidget client.
+- `/health` now reports version `1.4.0`.
+- No Railway variable or database migration is required.
+
 ## v1.3
 
 - Fixed product-image matching in Creative Sites order e-mails.

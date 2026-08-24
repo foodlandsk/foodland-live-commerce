@@ -6,8 +6,11 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import * as cheerio from 'cheerio';
 import pg from 'pg';
+import { pathToFileURL } from 'url';
 
 const { Pool } = pg;
+
+const VERSION = '1.4.0';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -235,17 +238,23 @@ function extractProducts(html = '') {
 }
 
 async function saveOrder({ orderNumber, orderedAt, products }) {
-  if (!orderNumber || !products.length) return 0;
+  if (!orderNumber || !products.length) return { inserted: 0, updated: 0 };
   const orderHash = sha256(`foodland:${orderNumber}`);
   let inserted = 0;
+  let updated = 0;
 
   for (const p of products) {
     const result = await pool.query(`
       INSERT INTO purchase_events
         (order_hash, order_number_masked, ordered_at, product_name, product_url, image_url, quantity)
       VALUES ($1,$2,$3,$4,$5,$6,$7)
-      ON CONFLICT (order_hash, product_url) DO NOTHING
-      RETURNING id
+      ON CONFLICT (order_hash, product_url) DO UPDATE SET
+        order_number_masked = EXCLUDED.order_number_masked,
+        ordered_at = EXCLUDED.ordered_at,
+        product_name = EXCLUDED.product_name,
+        image_url = COALESCE(EXCLUDED.image_url, purchase_events.image_url),
+        quantity = EXCLUDED.quantity
+      RETURNING (xmax = 0) AS inserted
     `, [
       orderHash,
       maskOrderNumber(orderNumber),
@@ -255,10 +264,11 @@ async function saveOrder({ orderNumber, orderedAt, products }) {
       p.image_url,
       p.quantity
     ]);
-    inserted += result.rowCount;
+    if (result.rows[0]?.inserted === true) inserted++;
+    else updated++;
   }
 
-  return inserted;
+  return { inserted, updated };
 }
 
 function imapConfig() {
@@ -287,6 +297,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
   const client = new ImapFlow(imapConfig());
   let processed = 0;
   let inserted = 0;
+  let updated = 0;
 
   try {
     await client.connect();
@@ -312,7 +323,9 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
         const products = extractProducts(html);
 
         if (orderNumber && products.length) {
-          inserted += await saveOrder({ orderNumber, orderedAt, products });
+          const saved = await saveOrder({ orderNumber, orderedAt, products });
+          inserted += saved.inserted;
+          updated += saved.updated;
           processed++;
 
           // Mark only successfully parsed order messages as seen.
@@ -336,7 +349,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
     pollRunning = false;
   }
 
-  return { processed, inserted };
+  return { processed, inserted, updated };
 }
 
 app.get('/health', async (_req, res) => {
@@ -345,7 +358,7 @@ app.get('/health', async (_req, res) => {
     res.json({
       ok: true,
       service: 'foodland-live-commerce',
-      version: '1.3.0',
+      version: VERSION,
       mailbox: process.env.MAIL_USER ? 'configured' : 'missing',
       pollSeconds: POLL_SECONDS,
       time: new Date().toISOString()
@@ -565,7 +578,13 @@ async function main() {
   }, POLL_SECONDS * 1000);
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export { app, extractProducts, findImageForProduct, saveOrder, VERSION };
