@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.2
+
+- Added `POST /admin/repair-images?hours=48` to repair stored image URLs directly from product-page metadata without rescanning IMAP.
+- Admin rescan now defaults to a 2-day lookback and accepts `?days=1..30`.
+- Scheduled mailbox polling always processes unseen messages only, preventing repeated historical rescans from a permissive environment setting.
+- `/health` now exposes the current scan phase and timestamps.
+- `/health` now reports version `1.4.2`.
+
 ## v1.4.1
 
 - Fixed Websupport IMAP `ETIMEOUT` crashes during admin rescan.

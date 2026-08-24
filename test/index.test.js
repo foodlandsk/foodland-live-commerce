@@ -62,6 +62,14 @@ test('mailbox is released before product-page image repair starts', async () => 
   assert.match(source, /client\.on\('error'/);
 });
 
+test('historical scans are bounded and stored images have a direct repair endpoint', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
+  assert.match(source, /lookbackDays = 2/);
+  assert.match(source, /app\.post\('\/admin\/repair-images'/);
+  assert.match(source, /processMailbox\(\{ unseenOnly: true \}\)/);
+  assert.match(source, /scan: scanStatus/);
+});
+
 test('Infowidget JavaScript is served and contains the multilingual client', async (t) => {
   const server = app.listen(0);
   t.after(() => server.close());
@@ -75,5 +83,5 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /foodland-live-commerce/);
   assert.match(body, /Vừa được mua/);
   assert.match(body, /api\/live\/recent/);
-  assert.equal(VERSION, '1.4.1');
+  assert.equal(VERSION, '1.4.2');
 });

@@ -10,7 +10,7 @@ import { pathToFileURL } from 'url';
 
 const { Pool } = pg;
 
-const VERSION = '1.4.1';
+const VERSION = '1.4.2';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -344,10 +344,24 @@ function imapConfig() {
 }
 
 let pollRunning = false;
+let scanStatus = {
+  running: false,
+  phase: 'idle',
+  started_at: null,
+  completed_at: null,
+  pending_orders: 0
+};
 
-async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
-  if (pollRunning) return { skipped: true, reason: 'already-running' };
+async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays = 2 } = {}) {
+  if (pollRunning) return { skipped: true, reason: 'already-running', scan: scanStatus };
   pollRunning = true;
+  scanStatus = {
+    running: true,
+    phase: 'imap',
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    pending_orders: 0
+  };
 
   const client = new ImapFlow(imapConfig());
   const pendingOrders = [];
@@ -373,7 +387,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
       try {
         const query = unseenOnly
           ? { seen: false }
-          : { since: new Date(Date.now() - 30 * 24 * 3600 * 1000) };
+          : { since: new Date(Date.now() - lookbackDays * 24 * 3600 * 1000) };
 
         for await (const msg of client.fetch(query, { uid: true, envelope: true, source: true, flags: true })) {
           const subject = msg.envelope?.subject || '';
@@ -395,6 +409,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
             // page HTTP requests. This prevents the mailbox socket from idling
             // until Websupport terminates it during a large admin rescan.
             pendingOrders.push({ orderNumber, orderedAt, products });
+            scanStatus.pending_orders = pendingOrders.length;
 
             // Parsing succeeded, so a normal poll does not need to download the
             // same message again. Admin rescan uses seen and unseen messages.
@@ -419,6 +434,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
 
     // Slow product-page lookups and database UPSERTs happen only after the
     // mailbox connection has been released.
+    scanStatus.phase = 'images-and-upsert';
     for (const order of pendingOrders) {
       const products = await repairAmbiguousProductImages(order.products);
       const saved = await saveOrder({ ...order, products });
@@ -428,6 +444,12 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY } = {}) {
     }
   } finally {
     pollRunning = false;
+    scanStatus = {
+      ...scanStatus,
+      running: false,
+      phase: 'idle',
+      completed_at: new Date().toISOString()
+    };
   }
 
   return { processed, inserted, updated };
@@ -442,6 +464,7 @@ app.get('/health', async (_req, res) => {
       version: VERSION,
       mailbox: process.env.MAIL_USER ? 'configured' : 'missing',
       pollSeconds: POLL_SECONDS,
+      scan: scanStatus,
       time: new Date().toISOString()
     });
   } catch (e) {
@@ -499,8 +522,65 @@ app.post('/admin/rescan', async (req, res) => {
   }
 
   try {
-    const result = await processMailbox({ unseenOnly: false });
+    const days = Math.min(30, Math.max(1, Number(req.query.days || 2)));
+    const result = await processMailbox({ unseenOnly: false, lookbackDays: days });
     res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/admin/repair-images', async (req, res) => {
+  if (!ADMIN_TOKEN || req.get('x-admin-token') !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+
+  try {
+    const hours = Math.min(720, Math.max(1, Number(req.query.hours || 48)));
+    const { rows } = await pool.query(`
+      SELECT DISTINCT product_url
+      FROM purchase_events
+      WHERE ordered_at >= NOW() - ($1::text || ' hours')::interval
+      ORDER BY product_url
+    `, [String(hours)]);
+
+    let productsRepaired = 0;
+    let rowsUpdated = 0;
+    const failedUrls = [];
+
+    for (let i = 0; i < rows.length; i += 4) {
+      const batch = rows.slice(i, i + 4);
+      for (const { product_url: productUrl } of batch) productImageCache.delete(productUrl);
+      const images = await Promise.all(batch.map(({ product_url: productUrl }) => resolveProductPageImage(productUrl)));
+
+      for (let j = 0; j < batch.length; j++) {
+        const productUrl = batch[j].product_url;
+        const imageUrl = images[j];
+        if (!imageUrl) {
+          failedUrls.push(productUrl);
+          continue;
+        }
+
+        const updated = await pool.query(`
+          UPDATE purchase_events
+          SET image_url = $1
+          WHERE product_url = $2
+            AND ordered_at >= NOW() - ($3::text || ' hours')::interval
+        `, [imageUrl, productUrl, String(hours)]);
+        productsRepaired++;
+        rowsUpdated += updated.rowCount;
+      }
+    }
+
+    res.json({
+      ok: true,
+      hours,
+      products_scanned: rows.length,
+      products_repaired: productsRepaired,
+      rows_updated: rowsUpdated,
+      failed_urls: failedUrls
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok: false, error: e.message });
@@ -649,11 +729,11 @@ async function main() {
 
   // First mailbox check shortly after start.
   setTimeout(() => {
-    processMailbox().then(r => console.log('Initial mailbox scan:', r)).catch(console.error);
+    processMailbox({ unseenOnly: true }).then(r => console.log('Initial mailbox scan:', r)).catch(console.error);
   }, 5000);
 
   setInterval(() => {
-    processMailbox().then(r => {
+    processMailbox({ unseenOnly: true }).then(r => {
       if (r?.processed || r?.inserted) console.log('Mailbox scan:', r);
     }).catch(console.error);
   }, POLL_SECONDS * 1000);

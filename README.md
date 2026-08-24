@@ -155,6 +155,10 @@ Aggregated product popularity for the last 24 hours and 7 days.
 
 Foodland Infowidget client.
 
+### `POST /admin/repair-images?hours=48`
+
+Repairs stored product image URLs directly from Foodland product-page metadata. Requires `x-admin-token`.
+
 ## Admin endpoint
 
 `POST /admin/rescan`
@@ -205,6 +209,6 @@ Verify:
 /api/live/recent
 ```
 
-`/health` should include `"version":"1.4.1"`.
+`/health` should include `"version":"1.4.2"`.
 
 Run `POST /admin/rescan` once after deployment. Existing purchase rows are then updated by UPSERT. Ambiguous e-mail images are resolved from the corresponding product page, so corrected `image_url` values are applied without a database migration.
