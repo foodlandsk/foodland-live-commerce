@@ -10,7 +10,7 @@ import { pathToFileURL } from 'url';
 
 const { Pool } = pg;
 
-const VERSION = '1.4.5';
+const VERSION = '1.4.6';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -599,15 +599,19 @@ app.get('/widget.js', (_req, res) => {
   res.set('Cache-Control', 'public, max-age=300');
   res.send(String.raw`
 (function () {
+  function startWidget() {
+    if (window.__foodlandLiveCommerceStarted) return true;
+
   const targets = Array.from(new Set([
     ...document.querySelectorAll('[data-foodland-live-commerce]'),
     ...document.querySelectorAll('#foodland-live-commerce')
   ]));
-  if (!targets.length) return;
+  if (!targets.length) return false;
 
   const config = targets.find(function (target) { return target.dataset.api; }) || targets[0];
   const api = (config.dataset.api || '').replace(/\/$/, '');
-  if (!api) return;
+  if (!api) return false;
+  window.__foodlandLiveCommerceStarted = true;
 
   const interval = Math.max(8000, Number(config.dataset.interval || 12000));
   const mode = config.dataset.mode === 'recent' ? 'recent' : 'mixed';
@@ -677,6 +681,41 @@ app.get('/widget.js', (_req, res) => {
   let messageIndex = 0;
   let messageTimer = null;
 
+  function setupCardControls(target) {
+    const root = target.closest('.fl-live-prefooter');
+    if (!root) return;
+
+    const previous = root.querySelector('.fl-live-prefooter__arrow--prev');
+    const next = root.querySelector('.fl-live-prefooter__arrow--next');
+    if (!previous || !next) return;
+
+    function sync() {
+      const max = Math.max(0, target.scrollWidth - target.clientWidth);
+      previous.disabled = target.scrollLeft <= 3;
+      next.disabled = target.scrollLeft >= max - 3 || max <= 3;
+      previous.setAttribute('aria-disabled', String(previous.disabled));
+      next.setAttribute('aria-disabled', String(next.disabled));
+    }
+
+    if (target.dataset.flControlsBound !== 'true') {
+      function move(direction) {
+        const card = target.querySelector('.fl-live-cards__card');
+        const cardWidth = card ? card.getBoundingClientRect().width : 220;
+        const gap = parseFloat(getComputedStyle(target).columnGap || getComputedStyle(target).gap || 0);
+        const page = Math.max(cardWidth + gap, target.clientWidth * 0.78);
+        target.scrollBy({ left: direction * page, behavior: 'smooth' });
+      }
+
+      previous.addEventListener('click', function () { move(-1); });
+      next.addEventListener('click', function () { move(1); });
+      target.addEventListener('scroll', sync, { passive: true });
+      window.addEventListener('resize', sync);
+      target.dataset.flControlsBound = 'true';
+    }
+
+    requestAnimationFrame(sync);
+  }
+
   function renderCards(recent) {
     if (!cardTargets.length) return;
 
@@ -697,7 +736,10 @@ app.get('/widget.js', (_req, res) => {
     }).join('');
 
     if (!cards) return;
-    cardTargets.forEach(function (target) { target.innerHTML = cards; });
+    cardTargets.forEach(function (target) {
+      target.innerHTML = cards;
+      setupCardControls(target);
+    });
   }
 
   function renderMessage() {
@@ -766,7 +808,19 @@ app.get('/widget.js', (_req, res) => {
   }
 
   load();
+  cardTargets.forEach(setupCardControls);
   if (cardTargets.length) setInterval(load, 60000);
+  return true;
+  }
+
+  if (startWidget()) return;
+
+  const observer = new MutationObserver(function () {
+    if (startWidget()) observer.disconnect();
+  });
+
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(function () { observer.disconnect(); }, 30000);
 })();
 `);
 });

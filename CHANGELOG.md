@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.6
+
+- Added functional previous/next controls for the compact prefooter card carousel.
+- Arrow state follows the horizontal scroll position and disables correctly at both ends.
+- Desktop arrows use the original Foodland carousel pattern; mobile keeps native swipe navigation.
+- Widget initialization now waits for CreativeSites modules inserted after the GTM tag runs.
+
 ## v1.4.5
 
 - Added a compact, image-based `data-layout="cards"` mode for full-width prefooter modules.

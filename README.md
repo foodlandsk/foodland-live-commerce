@@ -160,7 +160,11 @@ matching item at the same time, so both ticker halves retain identical widths.
 Use `data-layout="cards"` on a horizontally scrollable container. The client
 renders up to 12 recent purchases with each product's own `image_url`, product
 link, localized relative time and two-line product name. The container CSS stays
-in CreativeSites; load `widget.js` separately through GTM.
+in CreativeSites; load `widget.js` separately through GTM. Optional sibling
+buttons with the classes `fl-live-prefooter__arrow--prev` and
+`fl-live-prefooter__arrow--next` receive working paged navigation automatically.
+The loader also observes late CreativeSites DOM insertion for up to 30 seconds,
+so a DOM Ready GTM trigger can initialize modules added shortly afterward.
 
 ```html
 <div

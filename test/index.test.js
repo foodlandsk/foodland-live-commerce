@@ -97,9 +97,14 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /dataset\.layout === 'cards'/);
   assert.match(body, /fl-live-cards__card/);
   assert.match(body, /image_url/);
+  assert.match(body, /fl-live-prefooter__arrow--prev/);
+  assert.match(body, /fl-live-prefooter__arrow--next/);
+  assert.match(body, /scrollBy/);
   assert.match(body, /cardTargets\.forEach/);
   assert.match(body, /textTargets\.forEach/);
   assert.match(body, /Vừa được mua/);
   assert.match(body, /api\/live\/recent/);
-  assert.equal(VERSION, '1.4.5');
+  assert.match(body, /MutationObserver/);
+  assert.match(body, /__foodlandLiveCommerceStarted/);
+  assert.equal(VERSION, '1.4.6');
 });
