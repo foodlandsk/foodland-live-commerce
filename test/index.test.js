@@ -106,5 +106,20 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /api\/live\/recent/);
   assert.match(body, /MutationObserver/);
   assert.match(body, /__foodlandLiveCommerceStarted/);
-  assert.equal(VERSION, '1.4.6');
+  assert.equal(VERSION, '1.5.0');
+});
+
+test('Review widget JavaScript is served independently from live orders', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise(resolve => server.once('listening', resolve));
+  const { port } = server.address();
+  const response = await fetch(`http://127.0.0.1:${port}/reviews-widget.js`);
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /javascript/);
+  assert.match(body, /data-foodland-reviews/);
+  assert.match(body, /api\/reviews/);
+  assert.match(body, /using embedded fallback/);
+  assert.match(body, /Neodporúča obchod/);
 });

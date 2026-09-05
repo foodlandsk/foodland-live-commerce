@@ -2,7 +2,7 @@
 
 Live purchase/social-proof backend for Foodland.sk.
 
-Current release: **v1.3.0**.
+Current release: **v1.5.0**.
 
 ## What it does
 
@@ -13,6 +13,9 @@ Current release: **v1.3.0**.
 - stores anonymized purchase events in PostgreSQL;
 - exposes recent purchases and 24h/7d product statistics;
 - serves a multilingual JavaScript widget for the Foodland Infowidget.
+- imports the latest 30 Foodland reviews from NajNakup.sk once a day;
+- keeps the last successful review data available during a source outage;
+- exposes localized review data and a CreativeSites-compatible review widget.
 
 ## Repository structure
 
@@ -70,6 +73,14 @@ ALLOWED_ORIGINS=https://www.foodland.sk,https://foodland.sk
 
 ADMIN_TOKEN=GENERATE_A_LONG_RANDOM_SECRET
 RECENT_MAX_AGE_HOURS=48
+
+# Daily NajNakup.sk refresh (03:00 UTC by default)
+REVIEWS_REFRESH_HOUR_UTC=3
+
+# Optional: translate new Slovak reviews to CZ/DE/EN/PL/HU/VI.
+# Without these variables, every language safely falls back to Slovak review text.
+OPENAI_API_KEY=YOUR_OPTIONAL_OPENAI_API_KEY
+REVIEWS_TRANSLATION_MODEL=gpt-4.1-mini
 ```
 
 `PORT` is supplied by Railway.
@@ -199,6 +210,21 @@ Aggregated product popularity for the last 24 hours and 7 days.
 ### `GET /widget.js`
 
 Foodland Infowidget client.
+
+### `GET /api/reviews?lang=sk&limit=30`
+
+Latest cached NajNakup.sk reviews and current aggregate statistics. Supported
+languages: `sk`, `cz`, `de`, `en`, `pl`, `hu`, `vi`.
+
+### `GET /reviews-widget.js`
+
+Dynamic customer-review client. It updates the embedded fallback reviews only
+after a successful API response.
+
+### `POST /admin/refresh-reviews`
+
+Runs the NajNakup.sk import immediately. Requires `x-admin-token`. The automatic
+refresh runs once per day at `REVIEWS_REFRESH_HOUR_UTC`.
 
 ### `POST /admin/repair-images?hours=48`
 

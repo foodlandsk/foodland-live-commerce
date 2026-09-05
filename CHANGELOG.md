@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.0
+
+- Added a daily, failure-safe importer for the latest 30 Foodland reviews from NajNakup.sk.
+- Added separate PostgreSQL review tables without changing purchase-event storage.
+- Added localized `GET /api/reviews` and the CreativeSites `reviews-widget.js` client.
+- Added protected `POST /admin/refresh-reviews` for deployment verification.
+- Added optional OpenAI-powered translation with Slovak fallback.
+- Replaced misleading five-star review marks with the source's recommend/do-not-recommend status.
+
 ## v1.4.6
 
 - Added functional previous/next controls for the compact prefooter card carousel.

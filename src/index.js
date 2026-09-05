@@ -7,10 +7,11 @@ import { simpleParser } from 'mailparser';
 import * as cheerio from 'cheerio';
 import pg from 'pg';
 import { pathToFileURL } from 'url';
+import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAGES } from './reviews.js';
 
 const { Pool } = pg;
 
-const VERSION = '1.4.6';
+const VERSION = '1.5.0';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -18,6 +19,7 @@ const MAIL_FOLDER = process.env.MAIL_FOLDER || 'INBOX';
 const PROCESS_UNSEEN_ONLY = String(process.env.PROCESS_UNSEEN_ONLY || 'true').toLowerCase() === 'true';
 const RECENT_MAX_AGE_HOURS = Math.max(1, Number(process.env.RECENT_MAX_AGE_HOURS || 48));
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const REVIEWS_REFRESH_HOUR_UTC = Math.min(23, Math.max(0, Number(process.env.REVIEWS_REFRESH_HOUR_UTC || 3)));
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://www.foodland.sk,https://foodland.sk')
   .split(',')
@@ -64,7 +66,111 @@ async function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_purchase_events_product_url
       ON purchase_events(product_url);
+
+    CREATE TABLE IF NOT EXISTS customer_reviews (
+      source_key TEXT PRIMARY KEY,
+      customer_name TEXT NOT NULL,
+      review_date DATE NOT NULL,
+      original_text TEXT NOT NULL,
+      translations JSONB NOT NULL DEFAULT '{}'::jsonb,
+      recommended BOOLEAN NOT NULL,
+      customer_type TEXT NOT NULL DEFAULT 'verified',
+      fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_customer_reviews_date
+      ON customer_reviews(review_date DESC, fetched_at DESC);
+
+    CREATE TABLE IF NOT EXISTS review_sync_state (
+      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+      recommendation_percent INTEGER,
+      recommendation_90d_percent INTEGER,
+      total_reviews INTEGER,
+      last_success_at TIMESTAMPTZ,
+      last_attempt_at TIMESTAMPTZ,
+      last_error TEXT
+    );
+
+    INSERT INTO review_sync_state (singleton) VALUES (TRUE)
+    ON CONFLICT (singleton) DO NOTHING;
   `);
+}
+
+let reviewSyncStatus = { running: false, last_result: null };
+
+async function refreshCustomerReviews() {
+  if (reviewSyncStatus.running) return { skipped: true, reason: 'already-running' };
+  reviewSyncStatus.running = true;
+  const startedAt = new Date().toISOString();
+  try {
+    await pool.query(`UPDATE review_sync_state SET last_attempt_at=NOW(), last_error=NULL WHERE singleton=TRUE`);
+    const payload = await fetchNajnakupReviews();
+    const translations = await buildTranslations(payload.reviews, {
+      apiKey: process.env.OPENAI_API_KEY || '',
+      model: process.env.REVIEWS_TRANSLATION_MODEL || 'gpt-4.1-mini'
+    });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const review of payload.reviews) {
+        await client.query(`
+          INSERT INTO customer_reviews
+            (source_key, customer_name, review_date, original_text, translations, recommended, customer_type, fetched_at)
+          VALUES ($1,$2,TO_DATE($3,'DD.MM.YYYY'),$4,$5::jsonb,$6,$7,NOW())
+          ON CONFLICT (source_key) DO UPDATE SET
+            customer_name=EXCLUDED.customer_name,
+            review_date=EXCLUDED.review_date,
+            original_text=EXCLUDED.original_text,
+            translations=customer_reviews.translations || EXCLUDED.translations,
+            recommended=EXCLUDED.recommended,
+            customer_type=EXCLUDED.customer_type,
+            fetched_at=NOW()
+        `, [review.source_key, review.name, review.date, review.text, JSON.stringify(translations[review.source_key]), review.recommended, review.customer_type]);
+      }
+      await client.query(`
+        UPDATE review_sync_state SET
+          recommendation_percent=$1,
+          recommendation_90d_percent=$2,
+          total_reviews=$3,
+          last_success_at=NOW(),
+          last_error=NULL
+        WHERE singleton=TRUE
+      `, [payload.stats.recommendation_percent, payload.stats.recommendation_90d_percent, payload.stats.total_reviews]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    const result = { ok: true, started_at: startedAt, reviews: payload.reviews.length, stats: payload.stats };
+    reviewSyncStatus.last_result = result;
+    return result;
+  } catch (error) {
+    console.error('Review refresh failed:', error);
+    await pool.query(`UPDATE review_sync_state SET last_error=$1 WHERE singleton=TRUE`, [String(error.message).slice(0, 1000)]).catch(() => {});
+    reviewSyncStatus.last_result = { ok: false, started_at: startedAt, error: error.message };
+    throw error;
+  } finally {
+    reviewSyncStatus.running = false;
+  }
+}
+
+function millisecondsUntilReviewRefresh(hourUtc = REVIEWS_REFRESH_HOUR_UTC) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(hourUtc, 0, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next.getTime() - now.getTime();
+}
+
+function scheduleDailyReviewRefresh() {
+  const delay = millisecondsUntilReviewRefresh();
+  setTimeout(async () => {
+    try { await refreshCustomerReviews(); } catch {}
+    scheduleDailyReviewRefresh();
+  }, delay).unref();
+  return new Date(Date.now() + delay).toISOString();
 }
 
 function maskOrderNumber(orderNumber) {
@@ -472,6 +578,7 @@ app.get('/health', async (_req, res) => {
       mailbox: process.env.MAIL_USER ? 'configured' : 'missing',
       pollSeconds: POLL_SECONDS,
       scan: scanStatus,
+      reviews: reviewSyncStatus,
       time: new Date().toISOString()
     });
   } catch (e) {
@@ -521,6 +628,54 @@ app.get('/api/live/summary', async (_req, res) => {
 
   res.set('Cache-Control', 'public, max-age=60');
   res.json({ items: rows });
+});
+
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const requestedLanguage = String(req.query.lang || 'sk').toLowerCase();
+    const language = requestedLanguage === 'cs'
+      ? 'cz'
+      : (REVIEW_LANGUAGES.includes(requestedLanguage) ? requestedLanguage : 'sk');
+    const limit = Math.min(30, Math.max(1, Number(req.query.limit || 30)));
+    const [reviewsResult, stateResult] = await Promise.all([
+      pool.query(`
+        SELECT customer_name, TO_CHAR(review_date, 'DD.MM.YYYY') AS review_date,
+               original_text, translations, recommended, customer_type
+        FROM customer_reviews
+        ORDER BY review_date DESC, fetched_at DESC
+        LIMIT $1
+      `, [limit]),
+      pool.query(`
+        SELECT recommendation_percent, recommendation_90d_percent, total_reviews,
+               last_success_at, last_attempt_at
+        FROM review_sync_state WHERE singleton=TRUE
+      `)
+    ]);
+    const state = stateResult.rows[0] || {};
+    res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+    res.json({
+      language,
+      recommendation_percent: state.recommendation_percent,
+      recommendation_90d_percent: state.recommendation_90d_percent,
+      total_reviews: state.total_reviews,
+      updated_at: state.last_success_at,
+      items: reviewsResult.rows.map(row => localizeReview(row, language))
+    });
+  } catch (error) {
+    console.error('Reviews API failed:', error);
+    res.status(500).json({ ok: false, error: 'reviews_unavailable' });
+  }
+});
+
+app.post('/admin/refresh-reviews', async (req, res) => {
+  if (!ADMIN_TOKEN || req.get('x-admin-token') !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  try {
+    res.json(await refreshCustomerReviews());
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message });
+  }
 });
 
 app.post('/admin/rescan', async (req, res) => {
@@ -825,8 +980,72 @@ app.get('/widget.js', (_req, res) => {
 `);
 });
 
+app.get('/reviews-widget.js', (_req, res) => {
+  res.type('application/javascript');
+  res.set('Cache-Control', 'public, max-age=300');
+  res.send(String.raw`
+(function () {
+  var script = document.currentScript;
+  var api = script && script.src ? new URL(script.src).origin : '';
+  var copies = {
+    sk:{title:'{p} % zákazníkov odporúča FOODLAND',updated:'Najnovších {n} hodnotení z NajNakup.sk • {t} hodnotení celkom • Aktualizované: {d}',yes:'Odporúča obchod',no:'Neodporúča obchod'},
+    cz:{title:'{p} % zákazníků doporučuje FOODLAND',updated:'Nejnovějších {n} hodnocení z NajNakup.sk • celkem {t} hodnocení • Aktualizováno: {d}',yes:'Doporučuje obchod',no:'Nedoporučuje obchod'},
+    de:{title:'{p} % der Kunden empfehlen FOODLAND',updated:'Die neuesten {n} Bewertungen von NajNakup.sk • insgesamt {t} Bewertungen • Aktualisiert: {d}',yes:'Empfiehlt den Shop',no:'Empfiehlt den Shop nicht'},
+    en:{title:'{p}% of customers recommend FOODLAND',updated:'Latest {n} reviews from NajNakup.sk • {t} reviews in total • Updated: {d}',yes:'Recommends the store',no:'Does not recommend the store'},
+    pl:{title:'{p}% klientów poleca FOODLAND',updated:'{n} najnowszych opinii z NajNakup.sk • łącznie {t} opinii • Aktualizacja: {d}',yes:'Poleca sklep',no:'Nie poleca sklepu'},
+    hu:{title:'A vásárlók {p}%-a ajánlja a FOODLAND-ot',updated:'A NajNakup.sk {n} legfrissebb értékelése • összesen {t} értékelés • Frissítve: {d}',yes:'Ajánlja az üzletet',no:'Nem ajánlja az üzletet'},
+    vi:{title:'{p}% khách hàng giới thiệu FOODLAND',updated:'{n} đánh giá mới nhất từ NajNakup.sk • tổng cộng {t} đánh giá • Cập nhật: {d}',yes:'Giới thiệu cửa hàng',no:'Không giới thiệu cửa hàng'}
+  };
+  function fill(text, values) { return text.replace(/\{(\w+)\}/g, function (_, key) { return values[key]; }); }
+  function start(root) {
+    if (root.dataset.reviewsLoading === 'true' || root.dataset.reviewsLoaded === 'true') return;
+    root.dataset.reviewsLoading = 'true';
+    var lang = (root.dataset.lang || document.documentElement.lang || 'sk').toLowerCase();
+    lang = lang.indexOf('cs') === 0 ? 'cz' : lang.slice(0,2);
+    if (!copies[lang]) lang = 'sk';
+    var c = copies[lang], track = root.querySelector('.foodland-review-track'), dots = root.querySelector('.foodland-review-dots');
+    var title = root.querySelector('.foodland-review-title span'), updated = root.querySelector('.foodland-review-updated');
+    if (!api || !track || !dots) return;
+    fetch(api + '/api/reviews?lang=' + encodeURIComponent(lang) + '&limit=30', { cache:'no-store' })
+      .then(function (response) { if (!response.ok) throw new Error('HTTP ' + response.status); return response.json(); })
+      .then(function (data) {
+        if (!Array.isArray(data.items) || !data.items.length) throw new Error('No reviews');
+        var items = data.items, page = 0, perPage = window.innerWidth <= 768 ? 1 : 3;
+        function card(review) {
+          var el = document.createElement('div'); el.className = 'foodland-review-card';
+          var top = document.createElement('div'); top.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;gap:.5rem';
+          var badge = document.createElement('span'); badge.textContent = review.recommended ? '✓ ' + c.yes : '⚠ ' + c.no;
+          badge.style.cssText = 'font-size:.82rem;font-weight:600;color:' + (review.recommended ? '#2e7d32' : '#c62828');
+          var date = document.createElement('span'); date.textContent = review.date; date.style.cssText = 'font-size:.85rem;color:#999;white-space:nowrap';
+          top.appendChild(badge); top.appendChild(date);
+          var text = document.createElement('p'); text.textContent = review.text; text.style.cssText = 'font-style:italic;color:#444;margin:0 0 1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical';
+          var author = document.createElement('p'); author.textContent = review.name; author.style.cssText = 'color:#222;font-weight:bold;margin-top:auto';
+          var label = document.createElement('span'); label.textContent = review.label; label.style.cssText = 'display:block;color:#999;font-size:.82rem;font-weight:400;margin-top:2px'; author.appendChild(label);
+          el.appendChild(top); el.appendChild(text); el.appendChild(author); return el;
+        }
+        function render() {
+          var pages = Math.ceil(items.length / perPage); page = Math.max(0, Math.min(page, pages - 1)); track.textContent = ''; dots.textContent = '';
+          items.slice(page * perPage, page * perPage + perPage).forEach(function (item) { track.appendChild(card(item)); });
+          for (var i=0; i<pages; i++) { var dot=document.createElement('div'); dot.className='foodland-review-dot'+(i===page?' active':''); dot.textContent=i+1; dot.dataset.page=i; dot.onclick=function(){page=Number(this.dataset.page);render();}; dots.appendChild(dot); }
+        }
+        window.foodlandSlideReviews = function(direction) { page += direction; render(); };
+        var onResize = function () { var next=window.innerWidth<=768?1:3; if(next!==perPage){perPage=next;page=0;render();} };
+        window.addEventListener('resize', onResize);
+        var values={p:data.recommendation_percent||98,n:items.length,t:Number(data.total_reviews||0).toLocaleString(lang==='cz'?'cs-CZ':lang),d:data.updated_at?new Date(data.updated_at).toLocaleDateString(lang==='cz'?'cs-CZ':lang):''};
+        if(title) title.textContent='⭐ NajNakup.sk • '+fill(c.title,values); if(updated) updated.textContent=fill(c.updated,values);
+        render(); root.dataset.reviewsLoaded='true'; root.dataset.reviewsLoading='false';
+      }).catch(function (error) { root.dataset.reviewsLoading='false'; console.warn('Foodland reviews: using embedded fallback', error); });
+  }
+  function init() { document.querySelectorAll('[data-foodland-reviews]').forEach(start); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+  new MutationObserver(init).observe(document.documentElement,{childList:true,subtree:true});
+})();
+`);
+});
+
 async function main() {
   await initDb();
+  const nextReviewRefresh = scheduleDailyReviewRefresh();
 
   app.listen(PORT, () => {
     console.log(`Foodland Live Commerce listening on :${PORT}`);
@@ -836,6 +1055,17 @@ async function main() {
   setTimeout(() => {
     processMailbox({ unseenOnly: true }).then(r => console.log('Initial mailbox scan:', r)).catch(console.error);
   }, 5000);
+
+  setTimeout(async () => {
+    try {
+      const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM customer_reviews');
+      if (!rows[0]?.count) console.log('Initial review sync:', await refreshCustomerReviews());
+    } catch (error) {
+      console.error('Initial review sync failed:', error);
+    }
+  }, 10000);
+
+  console.log(`Next daily review refresh: ${nextReviewRefresh}`);
 
   setInterval(() => {
     processMailbox({ unseenOnly: true }).then(r => {
@@ -858,7 +1088,9 @@ export {
   extractProducts,
   extractProductPageImage,
   findImageForProduct,
+  millisecondsUntilReviewRefresh,
   repairAmbiguousProductImages,
+  refreshCustomerReviews,
   saveOrder,
   VERSION
 };
