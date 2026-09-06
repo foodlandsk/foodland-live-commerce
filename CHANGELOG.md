@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5.2
+
+- Reads three pages of the official NajNakup.sk shop-opinions widget (10 reviews each) before trying the public profile pages.
+- Review refresh diagnostics report the source, HTTP status, response size and parsed review count in `/health`.
+
+## v1.5.1
+
+- Added browser-compatible request headers and a cookie warm-up before the NajNakup.sk import.
+- Invalid review-hour configuration now safely falls back to 13:00 UTC instead of stopping the service.
+
 ## v1.5.0
 
 - Added a daily, failure-safe importer for the latest 30 Foodland reviews from NajNakup.sk.

@@ -3,6 +3,16 @@ import * as cheerio from 'cheerio';
 
 export const REVIEW_LANGUAGES = ['sk', 'cz', 'de', 'en', 'pl', 'hu', 'vi'];
 export const NAJNAKUP_REVIEW_URL = 'https://www.najnakup.sk/foodland-sk';
+export const NAJNAKUP_WIDGET_URL = 'https://www.najnakup.sk/dz_shop_opinions.aspx?w=8237';
+
+const browserHeaders = {
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'accept-language': 'sk-SK,sk;q=0.9,en;q=0.8',
+  'cache-control': 'no-cache',
+  pragma: 'no-cache',
+  'upgrade-insecure-requests': '1'
+};
 
 const ui = {
   sk: { verified: 'overený zákazník', regular: 'pravidelný zákazník' },
@@ -72,19 +82,102 @@ export function parseNajnakupPage(html = '') {
   return { stats: { recommendation_percent: overall, recommendation_90d_percent: last90, total_reviews: total }, reviews };
 }
 
+export function parseNajnakupWidgetPage(html = '') {
+  const $ = cheerio.load(html);
+  const reviews = [];
+  $('.dis').each((_, element) => {
+    const block = $(element);
+    const name = clean(block.find('.dis_logo').first().clone().find('img,br').remove().end().text());
+    const dateTime = clean(block.find('.dis_dt').first().text());
+    const date = dateTime.match(/\d{2}\.\d{2}\.\d{4}/)?.[0] || '';
+    const recommendation = clean(block.find('.dis_plus').first().text()).toLocaleUpperCase('sk');
+    const recommended = !recommendation.includes('NEODPORÚČAM');
+    const positive = clean(block.find('.rating_vyh').first().text());
+    const negative = clean(block.find('.rating_nev').first().text());
+    const summary = clean(block.find('.rating_desc').first().text());
+    const text = uniqueText([positive, negative, summary]).join(' ');
+    if (!name || !date || !text) return;
+    reviews.push({
+      source_key: reviewKey({ name, date, text }),
+      name,
+      date,
+      text,
+      recommended,
+      customer_type: /nakupujem pravidelne/i.test(summary) ? 'regular' : 'verified'
+    });
+  });
+  return { stats: { recommendation_percent: 0, recommendation_90d_percent: 0, total_reviews: 0 }, reviews };
+}
+
 export async function fetchNajnakupReviews({ fetchImpl = fetch, pages = 2 } = {}) {
-  const documents = [];
-  for (let page = 1; page <= pages; page++) {
-    const url = page === 1 ? NAJNAKUP_REVIEW_URL : `${NAJNAKUP_REVIEW_URL}/strana-${page}`;
+  let cookie = '';
+  const absorbCookies = response => {
+    const values = typeof response.headers?.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
+    const additions = values.map(value => value.split(';', 1)[0]);
+    if (additions.length) cookie = [...new Set([...cookie.split('; ').filter(Boolean), ...additions])].join('; ');
+  };
+  try {
+    const warmup = await fetchImpl('https://www.najnakup.sk/', {
+      signal: AbortSignal.timeout(15000),
+      redirect: 'follow',
+      headers: browserHeaders
+    });
+    absorbCookies(warmup);
+  } catch {
+    // The profile request can still succeed without a warm-up cookie.
+  }
+
+  const request = async (url, source, { method = 'GET', body, parser = parseNajnakupPage } = {}) => {
     const response = await fetchImpl(url, {
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(30000),
+      redirect: 'follow',
+      method,
+      body,
       headers: {
-        'user-agent': 'Foodland-Reviews/1.0 (+https://www.foodland.sk)',
-        accept: 'text/html,application/xhtml+xml'
+        ...browserHeaders,
+        referer: source === 'widget' ? 'https://www.foodland.sk/' : 'https://www.najnakup.sk/',
+        ...(method === 'POST' ? { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://www.najnakup.sk' } : {}),
+        ...(cookie ? { cookie } : {})
       }
     });
-    if (!response.ok) throw new Error(`Najnakup returned HTTP ${response.status} for page ${page}`);
-    documents.push(parseNajnakupPage(await response.text()));
+    absorbCookies(response);
+    const html = await response.text();
+    return { source, url, status: response.status, ok: response.ok, bytes: html.length, html, parsed: parser(html) };
+  };
+
+  const diagnostics = [];
+  const widget = await request(NAJNAKUP_WIDGET_URL, 'widget', { parser: parseNajnakupWidgetPage }).catch(error => ({ source: 'widget', status: 0, ok: false, bytes: 0, error: error.message }));
+  diagnostics.push({ source: widget.source, status: widget.status, bytes: widget.bytes, reviews: widget.parsed?.reviews.length || 0, error: widget.error || null });
+
+  let documents = [];
+  if (widget.ok && widget.parsed.reviews.length >= 10) {
+    documents = [widget.parsed];
+    let previousHtml = widget.html;
+    for (let page = 2; page <= Math.max(3, pages); page++) {
+      const $ = cheerio.load(previousHtml);
+      const form = new URLSearchParams();
+      $('form input[name]').each((_, input) => {
+        const name = $(input).attr('name');
+        if (name) form.set(name, $(input).attr('value') || '');
+      });
+      form.set('__EVENTTARGET', `ucShopRating1$DataPager1$ctl00$ctl0${page - 1}`);
+      form.set('__EVENTARGUMENT', '');
+      const result = await request(NAJNAKUP_WIDGET_URL, `widget-page-${page}`, {
+        method: 'POST', body: form, parser: parseNajnakupWidgetPage
+      }).catch(error => ({ source: `widget-page-${page}`, status: 0, ok: false, bytes: 0, error: error.message }));
+      diagnostics.push({ source: result.source, status: result.status, bytes: result.bytes, reviews: result.parsed?.reviews.length || 0, error: result.error || null });
+      if (!result.ok || !result.parsed.reviews.length) break;
+      documents.push(result.parsed);
+      previousHtml = result.html;
+    }
+  } else {
+    for (let page = 1; page <= pages; page++) {
+      const url = page === 1 ? NAJNAKUP_REVIEW_URL : `${NAJNAKUP_REVIEW_URL}/strana-${page}`;
+      const result = await request(url, `profile-page-${page}`).catch(error => ({ source: `profile-page-${page}`, status: 0, ok: false, bytes: 0, error: error.message }));
+      diagnostics.push({ source: result.source, status: result.status, bytes: result.bytes, reviews: result.parsed?.reviews.length || 0, error: result.error || null });
+      if (!result.ok) break;
+      documents.push(result.parsed);
+    }
   }
 
   const seen = new Set();
@@ -94,8 +187,10 @@ export async function fetchNajnakupReviews({ fetchImpl = fetch, pages = 2 } = {}
     return true;
   }).slice(0, 30);
 
-  if (reviews.length < 10) throw new Error(`Najnakup parser returned only ${reviews.length} reviews`);
-  return { stats: documents[0].stats, reviews };
+  if (reviews.length < 10) {
+    throw new Error(`Najnakup sources unavailable: ${diagnostics.map(x => `${x.source}=HTTP ${x.status}, ${x.bytes} bytes, ${x.reviews} reviews${x.error ? `, ${x.error}` : ''}`).join('; ')}`);
+  }
+  return { stats: documents[0].stats, reviews, source: documents[0] === widget.parsed ? 'widget' : 'profile', diagnostics };
 }
 
 async function translateWithOpenAI(texts, language, apiKey, model) {

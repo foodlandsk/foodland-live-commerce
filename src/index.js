@@ -11,7 +11,7 @@ import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAG
 
 const { Pool } = pg;
 
-const VERSION = '1.5.0';
+const VERSION = '1.5.2';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -19,7 +19,10 @@ const MAIL_FOLDER = process.env.MAIL_FOLDER || 'INBOX';
 const PROCESS_UNSEEN_ONLY = String(process.env.PROCESS_UNSEEN_ONLY || 'true').toLowerCase() === 'true';
 const RECENT_MAX_AGE_HOURS = Math.max(1, Number(process.env.RECENT_MAX_AGE_HOURS || 48));
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-const REVIEWS_REFRESH_HOUR_UTC = Math.min(23, Math.max(0, Number(process.env.REVIEWS_REFRESH_HOUR_UTC || 3)));
+const configuredReviewHour = Number(process.env.REVIEWS_REFRESH_HOUR_UTC);
+const REVIEWS_REFRESH_HOUR_UTC = Number.isInteger(configuredReviewHour) && configuredReviewHour >= 0 && configuredReviewHour <= 23
+  ? configuredReviewHour
+  : 13;
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://www.foodland.sk,https://foodland.sk')
   .split(',')
@@ -129,9 +132,9 @@ async function refreshCustomerReviews() {
       }
       await client.query(`
         UPDATE review_sync_state SET
-          recommendation_percent=$1,
-          recommendation_90d_percent=$2,
-          total_reviews=$3,
+          recommendation_percent=COALESCE(NULLIF($1,0), recommendation_percent),
+          recommendation_90d_percent=COALESCE(NULLIF($2,0), recommendation_90d_percent),
+          total_reviews=COALESCE(NULLIF($3,0), total_reviews),
           last_success_at=NOW(),
           last_error=NULL
         WHERE singleton=TRUE
@@ -143,7 +146,7 @@ async function refreshCustomerReviews() {
     } finally {
       client.release();
     }
-    const result = { ok: true, started_at: startedAt, reviews: payload.reviews.length, stats: payload.stats };
+    const result = { ok: true, started_at: startedAt, reviews: payload.reviews.length, stats: payload.stats, source: payload.source, diagnostics: payload.diagnostics };
     reviewSyncStatus.last_result = result;
     return result;
   } catch (error) {

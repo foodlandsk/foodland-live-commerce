@@ -2,7 +2,7 @@
 
 Live purchase/social-proof backend for Foodland.sk.
 
-Current release: **v1.5.0**.
+Current release: **v1.5.2**.
 
 ## What it does
 

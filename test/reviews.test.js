@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTranslations, fetchNajnakupReviews, localizeReview, parseNajnakupPage } from '../src/reviews.js';
+import { buildTranslations, fetchNajnakupReviews, localizeReview, parseNajnakupPage, parseNajnakupWidgetPage } from '../src/reviews.js';
 
 const page = `
   <div>Nákup v obchode odporúča:<strong> 98 %</strong></div>
@@ -35,9 +35,24 @@ test('parseNajnakupPage extracts public stats and faithful review data', () => {
   assert.equal(result.reviews[1].recommended, false);
 });
 
+test('parseNajnakupWidgetPage extracts review data without IP addresses', () => {
+  const html = `<div class="dis"><div class="dis_logo"><img>Monika</div><div class="dis_text">
+    <div class="dis_plus">ODPORÚČAM NÁKUP V TOMTO OBCHODE.</div>
+    <span class="rating_vyh">Rýchlosť dodania</span><span class="rating_nev">Žiadne</span>
+    <span class="rating_desc">V tomto obchode nakupujem pravidelne.</span>
+    <span class="dis_dt">05.09.2026 13:23</span><span class="dis_co">62.197.243.*</span>
+  </div></div>`;
+  const result = parseNajnakupWidgetPage(html);
+  assert.equal(result.reviews.length, 1);
+  assert.equal(result.reviews[0].name, 'Monika');
+  assert.equal(result.reviews[0].date, '05.09.2026');
+  assert.equal(result.reviews[0].text.includes('62.197'), false);
+  assert.equal(result.reviews[0].customer_type, 'regular');
+});
+
 test('fetchNajnakupReviews rejects suspiciously small parser results', async () => {
   const fetchImpl = async () => ({ ok: true, text: async () => page });
-  await assert.rejects(fetchNajnakupReviews({ fetchImpl, pages: 1 }), /only 2 reviews/);
+  await assert.rejects(fetchNajnakupReviews({ fetchImpl, pages: 1 }), /2 reviews/);
 });
 
 test('translations safely fall back to Slovak when no API key is configured', async () => {
