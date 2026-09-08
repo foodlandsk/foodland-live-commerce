@@ -1,0 +1,128 @@
+<!-- Foodland Infoticker mit dynamischen neuesten Bestellungen -->
+<div class="fl-info-ticker" lang="de" aria-label="Aktuelle Informationen von Foodland">
+  <div class="fl-info-ticker__track">
+    <div class="fl-info-ticker__group">
+      <span class="fl-info-ticker__item">🚚 <strong>Kostenloser Versand ab 49 €</strong> für Privatkunden</span>
+      <span class="fl-info-ticker__item">⭐ <strong>4,9/5 Kundenbewertung</strong></span>
+      <span
+        id="foodland-live-commerce"
+        class="fl-info-ticker__item"
+        data-foodland-live-commerce
+        data-api="https://live-orders-data-production.up.railway.app"
+        data-mode="recent"
+        data-interval="12000"
+        aria-live="polite">🛒 <strong>Neueste Bestellung:</strong> wird geladen…</span>
+      <span class="fl-info-ticker__item">🎁 <strong>Jede Woche Neuheiten</strong></span>
+    </div>
+
+    <!-- Presná kópia prvej skupiny je potrebná pre plynulú slučku. -->
+    <div class="fl-info-ticker__group" aria-hidden="true">
+      <span class="fl-info-ticker__item">🚚 <strong>Kostenloser Versand ab 49 €</strong> für Privatkunden</span>
+      <span class="fl-info-ticker__item">⭐ <strong>4,9/5 Kundenbewertung</strong></span>
+      <span
+        class="fl-info-ticker__item"
+        data-foodland-live-commerce>🛒 <strong>Neueste Bestellung:</strong> wird geladen…</span>
+      <span class="fl-info-ticker__item">🎁 <strong>Jede Woche Neuheiten</strong></span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .fl-info-ticker,
+  .fl-info-ticker * {
+    box-sizing: border-box;
+  }
+
+  .fl-info-ticker {
+    width: 100%;
+    overflow: hidden;
+    padding: 10px 0;
+    color: #111;
+    background: transparent;
+    font-family: "Be Vietnam Pro", Arial, sans-serif;
+  }
+
+  .fl-info-ticker__track {
+    display: flex;
+    width: max-content;
+    animation: flInfoTickerScroll 28s linear infinite;
+    will-change: transform;
+  }
+
+  .fl-info-ticker__group {
+    display: flex;
+    flex: 0 0 auto;
+  }
+
+  .fl-info-ticker__item {
+    display: inline-block;
+    flex: 0 0 auto;
+    padding-right: 60px;
+    white-space: nowrap;
+    color: #111;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .fl-info-ticker__item strong {
+    color: #b91c1c;
+  }
+
+  .fl-info-ticker__item a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .fl-info-ticker__item a:hover,
+  .fl-info-ticker__item a:focus-visible {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .fl-info-ticker:hover .fl-info-ticker__track {
+    animation-play-state: paused;
+  }
+
+  @media (min-width: 768px) {
+    .fl-info-ticker__item {
+      font-size: 17px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fl-info-ticker__track {
+      width: 100%;
+      animation: none;
+      transform: none;
+    }
+
+    .fl-info-ticker__group {
+      flex-wrap: wrap;
+      gap: 8px 24px;
+    }
+
+    .fl-info-ticker__group[aria-hidden="true"] {
+      display: none;
+    }
+
+    .fl-info-ticker__item {
+      padding-right: 0;
+      white-space: normal;
+    }
+  }
+
+  @keyframes flInfoTickerScroll {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+</style>
+
+<script
+  src="https://live-orders-data-production.up.railway.app/widget.js?v=1.6.0"
+  defer>
+</script>

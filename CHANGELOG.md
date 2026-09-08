@@ -5,6 +5,7 @@
 - Consolidated Live purchases and NajNakup customer reviews in one repository and one Railway service.
 - Added all seven CreativeSites review modules under `modules/reviews/`.
 - Added reusable Live purchase snippets under `modules/live-orders/`.
+- Added the complete animated information ticker in all seven storefront languages without simplifying its design or content.
 - Added the Foodland Express PHP review proxy under `proxy/`.
 - Added one environment template for both features and set the review refresh to 21:00 Europe/Bratislava.
 

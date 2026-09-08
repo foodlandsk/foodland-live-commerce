@@ -18,7 +18,7 @@ foodland-live-commerce/
 │   └── reviews.js
 ├── test/
 ├── modules/
-│   ├── live-orders/
+│   ├── live-orders/       # plný ticker SK/CZ/DE/EN/PL/HU/VI
 │   └── reviews/
 ├── proxy/
 │   └── foodland-najnakup-reviews.php
@@ -56,7 +56,7 @@ Administrátorské endpointy vyžadujú hlavičku `x-admin-token`.
 ## CreativeSites
 
 - Recenzie: vložte príslušný celý súbor z `modules/reviews/` do každej jazykovej mutácie.
-- Live nákupy: použite modul z `modules/live-orders/`; skript rozpozná jazyk stránky.
+- Live nákupy: vložte príslušný súbor `Foodland_Live_Ticker_<JAZYK>.html` z `modules/live-orders/`. Dynamické produkty aj pevné informačné texty budú v jazyku danej mutácie.
 - Nepoužívajte pôvodný NajNakup iframe spolu s vlastným modulom recenzií.
 
 ## Kontrola
