@@ -11,7 +11,7 @@ import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAG
 
 const { Pool } = pg;
 
-const VERSION = '1.5.3';
+const VERSION = '1.5.4';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -82,6 +82,9 @@ async function initDb() {
       fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    ALTER TABLE customer_reviews
+      ADD COLUMN IF NOT EXISTS source_position INTEGER;
+
     CREATE INDEX IF NOT EXISTS idx_customer_reviews_date
       ON customer_reviews(review_date DESC, fetched_at DESC);
 
@@ -116,11 +119,11 @@ async function refreshCustomerReviews() {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      for (const review of payload.reviews) {
+      for (const [position, review] of payload.reviews.entries()) {
         await client.query(`
           INSERT INTO customer_reviews
-            (source_key, customer_name, review_date, original_text, translations, recommended, customer_type, fetched_at)
-          VALUES ($1,$2,TO_DATE($3,'DD.MM.YYYY'),$4,$5::jsonb,$6,$7,NOW())
+            (source_key, customer_name, review_date, original_text, translations, recommended, customer_type, source_position, fetched_at)
+          VALUES ($1,$2,TO_DATE($3,'DD.MM.YYYY'),$4,$5::jsonb,$6,$7,$8,NOW())
           ON CONFLICT (source_key) DO UPDATE SET
             customer_name=EXCLUDED.customer_name,
             review_date=EXCLUDED.review_date,
@@ -128,8 +131,9 @@ async function refreshCustomerReviews() {
             translations=customer_reviews.translations || EXCLUDED.translations,
             recommended=EXCLUDED.recommended,
             customer_type=EXCLUDED.customer_type,
+            source_position=EXCLUDED.source_position,
             fetched_at=NOW()
-        `, [review.source_key, review.name, review.date, review.text, JSON.stringify(translations[review.source_key]), review.recommended, review.customer_type]);
+        `, [review.source_key, review.name, review.date, review.text, JSON.stringify(translations[review.source_key]), review.recommended, review.customer_type, position]);
       }
       await client.query(`
         UPDATE review_sync_state SET
@@ -658,7 +662,7 @@ app.get('/api/reviews', async (req, res) => {
         SELECT customer_name, TO_CHAR(review_date, 'DD.MM.YYYY') AS review_date,
                original_text, translations, recommended, customer_type
         FROM customer_reviews
-        ORDER BY review_date DESC, fetched_at DESC
+        ORDER BY review_date DESC, source_position ASC NULLS LAST, fetched_at DESC
         LIMIT $1
       `, [limit]),
       pool.query(`

@@ -81,6 +81,13 @@ test('messages are marked seen only after the IMAP fetch iterator finishes', asy
   assert.equal(source.slice(fetchAt, collectAt).includes('await client.messageFlagsAdd'), false);
 });
 
+test('reviews preserve source order inside the same date', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
+  assert.match(source, /ADD COLUMN IF NOT EXISTS source_position INTEGER/);
+  assert.match(source, /for \(const \[position, review\] of payload\.reviews\.entries\(\)\)/);
+  assert.match(source, /ORDER BY review_date DESC, source_position ASC NULLS LAST, fetched_at DESC/);
+});
+
 test('Infowidget JavaScript is served and contains the multilingual client', async (t) => {
   const server = app.listen(0);
   t.after(() => server.close());
@@ -106,7 +113,7 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /api\/live\/recent/);
   assert.match(body, /MutationObserver/);
   assert.match(body, /__foodlandLiveCommerceStarted/);
-  assert.equal(VERSION, '1.5.3');
+  assert.equal(VERSION, '1.5.4');
 });
 
 test('Review widget JavaScript is served independently from live orders', async (t) => {

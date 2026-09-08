@@ -103,3 +103,8 @@
 - Keeps the direct Najnakup widget/profile fetch only as a fallback.
 - Existing CreativeSites modules and public API paths remain unchanged.
 - Schedules the daily update at 15:00 Europe/Bratislava throughout summer and winter time.
+# 1.5.4
+
+- Preserves the exact newest-first order delivered by Najnakup.sk.
+- Adds `source_position` through a safe automatic database migration.
+- Fixes reversed ordering when several reviews have the same calendar date.

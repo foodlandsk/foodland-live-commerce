@@ -2,7 +2,7 @@
 
 Live purchase/social-proof backend for Foodland.sk.
 
-Current release: **v1.5.3**.
+Current release: **v1.5.4**.
 
 Reviews are loaded primarily from the verified Foodland Express PHP proxy. The
 URL defaults to `https://foodland-express.sk/foodland-najnakup-reviews.php` and
