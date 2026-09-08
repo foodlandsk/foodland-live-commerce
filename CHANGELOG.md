@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.6
+
+- Detects the Foodland language from the current host before consulting CreativeSites' HTML language attribute.
+- Fixes universal modules remaining Slovak on CZ, DE, EN, PL, HU and VI storefronts.
+
 ## v1.5.5
 
 - Added one-code multilingual live-order modules for SK, CZ, DE, EN, PL, HU and VI.

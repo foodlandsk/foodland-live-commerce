@@ -2,7 +2,7 @@
 
 Live purchase/social-proof backend for Foodland.sk.
 
-Current release: **v1.5.5**.
+Current release: **v1.5.6**.
 
 Live-order widgets can be reused unchanged across all Foodland mutations. The
 client detects the document language and requests `/api/live/recent?lang=...`.

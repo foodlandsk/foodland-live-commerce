@@ -11,7 +11,7 @@ import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAG
 
 const { Pool } = pg;
 
-const VERSION = '1.5.5';
+const VERSION = '1.5.6';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -898,7 +898,22 @@ app.get('/widget.js', (_req, res) => {
   const cardTargets = targets.filter(function (target) { return target.dataset.layout === 'cards'; });
   const textTargets = targets.filter(function (target) { return target.dataset.layout !== 'cards'; });
 
-  const langRaw = (document.documentElement.lang || 'sk').toLowerCase();
+  const hostLanguage = {
+    'www.foodland.sk': 'sk',
+    'foodland.sk': 'sk',
+    'www.foodland-express.cz': 'cz',
+    'foodland-express.cz': 'cz',
+    'www.foodland.at': 'de',
+    'foodland.at': 'de',
+    'www.foodland-express.com': 'en',
+    'foodland-express.com': 'en',
+    'www.foodland-express.pl': 'pl',
+    'foodland-express.pl': 'pl',
+    'www.foodland.hu': 'hu',
+    'foodland.hu': 'hu',
+    'vn.foodland.sk': 'vi'
+  }[(window.location.hostname || '').toLowerCase()];
+  const langRaw = (hostLanguage || config.dataset.lang || document.documentElement.lang || 'sk').toLowerCase();
   const lang = langRaw.startsWith('cs') ? 'cz' :
                langRaw.startsWith('de') ? 'de' :
                langRaw.startsWith('en') ? 'en' :

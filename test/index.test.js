@@ -131,9 +131,12 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /api\/live\/recent/);
   assert.match(body, /data-fl-live-copy/);
   assert.match(body, /encodeURIComponent\(lang\)/);
+  assert.match(body, /window\.location\.hostname/);
+  assert.match(body, /www\.foodland-express\.cz/);
+  assert.match(body, /vn\.foodland\.sk/);
   assert.match(body, /MutationObserver/);
   assert.match(body, /__foodlandLiveCommerceStarted/);
-  assert.equal(VERSION, '1.5.5');
+  assert.equal(VERSION, '1.5.6');
 });
 
 test('Review widget JavaScript is served independently from live orders', async (t) => {
