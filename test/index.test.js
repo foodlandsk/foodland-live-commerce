@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { app, extractProducts, extractProductId, extractLocalizedProductPage, extractProductPageImage, VERSION } from '../src/index.js';
+import {
+  app,
+  clampInt,
+  extractProducts,
+  extractProductId,
+  extractLocalizedProductPage,
+  extractProductPageImage,
+  mapWithConcurrency,
+  maskOrderNumber,
+  parseOrderDate,
+  VERSION
+} from '../src/index.js';
 
 test('extractProducts keeps each image in its own product row', () => {
   const html = `
@@ -152,4 +163,61 @@ test('Review widget JavaScript is served independently from live orders', async 
   assert.match(body, /api\/reviews/);
   assert.match(body, /using embedded fallback/);
   assert.match(body, /Neodporúča obchod/);
+});
+
+test('parseOrderDate applies the correct Europe/Bratislava DST offset at the CET/CEST boundary', () => {
+  const utcOf = ddmmyyyyHms => parseOrderDate('', `Dátum a čas prijatia: ${ddmmyyyyHms}`).toISOString();
+
+  // 2026 DST transitions: CEST starts Sun 29 Mar, ends Sun 25 Oct (both 2026).
+  // A fixed month>=4 && month<=10 heuristic gets both boundary weeks wrong.
+  assert.equal(utcOf('28. 3. 2026 10:00:00'), '2026-03-28T09:00:00.000Z'); // still CET (+01:00)
+  assert.equal(utcOf('31. 3. 2026 10:00:00'), '2026-03-31T08:00:00.000Z'); // already CEST (+02:00)
+  assert.equal(utcOf('24. 10. 2026 10:00:00'), '2026-10-24T08:00:00.000Z'); // still CEST (+02:00)
+  assert.equal(utcOf('30. 10. 2026 10:00:00'), '2026-10-30T09:00:00.000Z'); // already CET (+01:00)
+
+  // Sanity checks well away from either transition.
+  assert.equal(utcOf('15. 7. 2026 12:00:00'), '2026-07-15T10:00:00.000Z');
+  assert.equal(utcOf('15. 1. 2026 12:00:00'), '2026-01-15T11:00:00.000Z');
+});
+
+test('parseOrderDate falls back to the mail date when the subject/body has no timestamp', () => {
+  const mailDate = new Date('2026-05-01T00:00:00.000Z');
+  assert.equal(parseOrderDate('no timestamp here', '', mailDate).getTime(), mailDate.getTime());
+});
+
+test('maskOrderNumber always hides at least one digit for real order numbers', () => {
+  // parseOrderNumber only ever extracts 5+ digit order numbers.
+  for (const orderNumber of ['12345', '123456', '1234567', '123456789012']) {
+    const masked = maskOrderNumber(orderNumber);
+    assert.notEqual(masked, orderNumber);
+    assert.match(masked, /\*/);
+    const digitsShown = masked.replace(/\*/g, '').length;
+    assert.ok(digitsShown < orderNumber.length, `expected fewer than ${orderNumber.length} digits shown, got "${masked}"`);
+  }
+  assert.equal(maskOrderNumber('1234'), '****');
+  assert.equal(maskOrderNumber(''), '****');
+});
+
+test('clampInt falls back to a finite default instead of propagating NaN', () => {
+  assert.equal(clampInt('abc', 10, 1, 30), 10);
+  assert.equal(clampInt(undefined, 10, 1, 30), 10);
+  assert.equal(clampInt('5', 10, 1, 30), 5);
+  assert.equal(clampInt('999', 10, 1, 30), 30);
+  assert.equal(clampInt('-5', 10, 1, 30), 1);
+  assert.equal(clampInt('7.8', 10, 1, 30), 7);
+});
+
+test('mapWithConcurrency preserves order and never runs more than batchSize mappers at once', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const items = [10, 20, 30, 40, 50, 60, 70];
+  const results = await mapWithConcurrency(items, 3, async value => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    active--;
+    return value * 2;
+  });
+  assert.deepEqual(results, [20, 40, 60, 80, 100, 120, 140]);
+  assert.ok(maxActive <= 3, `expected at most 3 concurrent calls, saw ${maxActive}`);
 });

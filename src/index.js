@@ -205,7 +205,10 @@ function scheduleDailyReviewRefresh() {
 function maskOrderNumber(orderNumber) {
   const s = String(orderNumber || '');
   if (s.length <= 4) return '****';
-  return `${s.slice(0, 4)}***${s.slice(-2)}`;
+  // Keep only the first 2 and last 1 characters; parseOrderNumber requires at
+  // least 5 digits, so this always hides at least 2 digits (no overlap
+  // between the head and tail slices, unlike the previous 4/2-character split).
+  return `${s.slice(0, 2)}***${s.slice(-1)}`;
 }
 
 function parseOrderNumber(subject = '', text = '') {
@@ -217,18 +220,38 @@ function parseOrderNumber(subject = '', text = '') {
   return m?.[1] || null;
 }
 
+// Converts Europe/Bratislava wall-clock components to a correct UTC Date,
+// including the CET/CEST transition. This avoids a fixed-month DST heuristic
+// (Slovakia switches on the last Sunday of March/October, not on month
+// boundaries) by asking Intl for the actual offset at that instant and
+// correcting for it, the same double-conversion trick used by most
+// timezone-free polyfills.
+function zonedTimeToUtc(year, month, day, hour, minute, second, timeZone) {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(new Date(utcGuess)).map(part => [part.type, part.value]));
+  const asZoned = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour), Number(parts.minute), Number(parts.second)
+  );
+  return new Date(utcGuess - (asZoned - utcGuess));
+}
+
 function parseOrderDate(subject = '', text = '', mailDate = null) {
   const source = `${subject}\n${text}`;
   const m = source.match(/Dátum a čas prijatia:\s*([0-3]?\d)\.\s*([01]?\d)\.\s*(20\d{2})\s+([0-2]?\d):([0-5]\d):([0-5]\d)/i);
   if (m) {
     const [, dd, mm, yyyy, hh, min, sec] = m;
-    // Foodland / Slovakia local time. Store with Europe/Bratislava offset approximation
-    // using JS local construction is unsafe on UTC servers, so use explicit +02:00/+01:00 heuristic.
-    // For social proof, minute-level precision is sufficient.
-    const month = Number(mm);
-    const summer = month >= 4 && month <= 10;
-    const offset = summer ? '+02:00' : '+01:00';
-    return new Date(`${yyyy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}T${String(hh).padStart(2,'0')}:${min}:${sec}${offset}`);
+    return zonedTimeToUtc(Number(yyyy), Number(mm), Number(dd), Number(hh), Number(min), Number(sec), 'Europe/Bratislava');
   }
   return mailDate ? new Date(mailDate) : new Date();
 }
@@ -461,6 +484,20 @@ async function resolveProductPageImage(productUrl) {
   return imageUrl;
 }
 
+// Applies an async mapper to `items` in fixed-size batches, awaiting each
+// batch before starting the next. Used everywhere we call out to Foodland's
+// own product pages so a single incoming request can never fan out into an
+// unbounded number of concurrent outbound requests.
+async function mapWithConcurrency(items, batchSize, mapper) {
+  const results = new Array(items.length);
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(mapper));
+    batchResults.forEach((result, offset) => { results[i + offset] = result; });
+  }
+  return results;
+}
+
 async function repairAmbiguousProductImages(products) {
   const counts = new Map();
   for (const p of products) {
@@ -473,13 +510,10 @@ async function repairAmbiguousProductImages(products) {
     .filter(({ product }) => !product.image_url || (counts.get(product.image_url) || 0) > 1);
 
   // Keep the product site load modest during a large 30-day admin rescan.
-  for (let i = 0; i < candidates.length; i += 4) {
-    const batch = candidates.slice(i, i + 4);
-    const images = await Promise.all(batch.map(({ product }) => resolveProductPageImage(product.product_url)));
-    images.forEach((imageUrl, index) => {
-      if (imageUrl) repaired[batch[index].index].image_url = imageUrl;
-    });
-  }
+  const images = await mapWithConcurrency(candidates, 4, ({ product }) => resolveProductPageImage(product.product_url));
+  images.forEach((imageUrl, index) => {
+    if (imageUrl) repaired[candidates[index].index].image_url = imageUrl;
+  });
 
   return repaired;
 }
@@ -703,56 +737,80 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+// Number(req.query.x) is NaN for a non-numeric query param, and NaN survives
+// Math.min/Math.max unchanged, so a bad ?limit=/?hours= value used to reach
+// an unguarded pool.query() as an invalid SQL parameter. Clamp against a
+// finite fallback first so malformed input degrades to the default instead.
+function clampInt(value, fallback, min, max) {
+  const n = Number(value);
+  const base = Number.isFinite(n) ? Math.trunc(n) : fallback;
+  return Math.min(max, Math.max(min, base));
+}
+
 app.get('/api/live/recent', async (req, res) => {
-  const limit = Math.min(30, Math.max(1, Number(req.query.limit || 10)));
-  const hours = Math.min(168, Math.max(1, Number(req.query.hours || RECENT_MAX_AGE_HOURS)));
-  const lang = normalizeLiveLanguage(req.query.lang);
-  const queryLimit = lang === 'sk' ? limit : Math.min(90, limit * 3);
+  try {
+    const limit = clampInt(req.query.limit, 10, 1, 30);
+    const hours = clampInt(req.query.hours, RECENT_MAX_AGE_HOURS, 1, 168);
+    const lang = normalizeLiveLanguage(req.query.lang);
+    const queryLimit = lang === 'sk' ? limit : Math.min(90, limit * 3);
 
-  const { rows } = await pool.query(`
-    SELECT
-      product_name,
-      product_url,
-      image_url,
-      quantity,
-      ordered_at,
-      GREATEST(0, ROUND(EXTRACT(EPOCH FROM (NOW() - ordered_at)) / 60))::int AS minutes_ago
-    FROM purchase_events
-    WHERE ordered_at >= NOW() - ($1::text || ' hours')::interval
-    ORDER BY ordered_at DESC
-    LIMIT $2
-  `, [String(hours), queryLimit]);
+    const { rows } = await pool.query(`
+      SELECT
+        product_name,
+        product_url,
+        image_url,
+        quantity,
+        ordered_at,
+        GREATEST(0, ROUND(EXTRACT(EPOCH FROM (NOW() - ordered_at)) / 60))::int AS minutes_ago
+      FROM purchase_events
+      WHERE ordered_at >= NOW() - ($1::text || ' hours')::interval
+      ORDER BY ordered_at DESC
+      LIMIT $2
+    `, [String(hours), queryLimit]);
 
-  const items = lang === 'sk'
-    ? rows
-    : (await Promise.all(rows.map(row => localizeLiveProduct(row, lang))))
-      .filter(Boolean)
-      .slice(0, limit);
+    const items = lang === 'sk'
+      ? rows
+      // Localizing a product means an outbound fetch to the matching
+      // language storefront (localizeLiveProduct); batch it like every
+      // other product-page lookup in this file so one incoming request
+      // can't fan out into up to `queryLimit` concurrent outbound requests.
+      : (await mapWithConcurrency(rows, 4, row => localizeLiveProduct(row, lang)))
+        .filter(Boolean)
+        .slice(0, limit);
 
-  res.set('Cache-Control', 'public, max-age=30');
-  res.json({ lang, items });
+    res.set('Cache-Control', 'public, max-age=30');
+    res.json({ lang, items });
+  } catch (error) {
+    console.error('Live recent API failed:', error);
+    res.status(500).json({ ok: false, error: 'live_recent_unavailable' });
+  }
 });
 
 app.get('/api/live/summary', async (_req, res) => {
-  const { rows } = await pool.query(`
-    SELECT
-      product_name,
-      product_url,
-      MAX(image_url) AS image_url,
-      SUM(quantity) FILTER (WHERE ordered_at >= NOW() - INTERVAL '24 hours')::int AS units_24h,
-      COUNT(DISTINCT order_hash) FILTER (WHERE ordered_at >= NOW() - INTERVAL '24 hours')::int AS customers_24h,
-      SUM(quantity) FILTER (WHERE ordered_at >= NOW() - INTERVAL '7 days')::int AS units_7d,
-      COUNT(DISTINCT order_hash) FILTER (WHERE ordered_at >= NOW() - INTERVAL '7 days')::int AS customers_7d,
-      MAX(ordered_at) AS last_purchase_at
-    FROM purchase_events
-    WHERE ordered_at >= NOW() - INTERVAL '7 days'
-    GROUP BY product_name, product_url
-    ORDER BY customers_24h DESC, units_24h DESC, customers_7d DESC
-    LIMIT 30
-  `);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        product_name,
+        product_url,
+        MAX(image_url) AS image_url,
+        SUM(quantity) FILTER (WHERE ordered_at >= NOW() - INTERVAL '24 hours')::int AS units_24h,
+        COUNT(DISTINCT order_hash) FILTER (WHERE ordered_at >= NOW() - INTERVAL '24 hours')::int AS customers_24h,
+        SUM(quantity) FILTER (WHERE ordered_at >= NOW() - INTERVAL '7 days')::int AS units_7d,
+        COUNT(DISTINCT order_hash) FILTER (WHERE ordered_at >= NOW() - INTERVAL '7 days')::int AS customers_7d,
+        MAX(ordered_at) AS last_purchase_at
+      FROM purchase_events
+      WHERE ordered_at >= NOW() - INTERVAL '7 days'
+      GROUP BY product_name, product_url
+      ORDER BY customers_24h DESC, units_24h DESC, customers_7d DESC
+      LIMIT 30
+    `);
 
-  res.set('Cache-Control', 'public, max-age=60');
-  res.json({ items: rows });
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ items: rows });
+  } catch (error) {
+    console.error('Live summary API failed:', error);
+    res.status(500).json({ ok: false, error: 'live_summary_unavailable' });
+  }
 });
 
 app.get('/api/reviews', async (req, res) => {
@@ -1244,12 +1302,16 @@ if (isDirectRun) {
 
 export {
   app,
+  clampInt,
   extractProducts,
   extractProductId,
   extractLocalizedProductPage,
   extractProductPageImage,
   findImageForProduct,
+  mapWithConcurrency,
+  maskOrderNumber,
   millisecondsUntilReviewRefresh,
+  parseOrderDate,
   repairAmbiguousProductImages,
   refreshCustomerReviews,
   saveOrder,
