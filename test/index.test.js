@@ -314,3 +314,42 @@ test('review refresh hour falls back to the documented 21:00 default when unset'
   }).format(next));
   assert.equal(hour, 21);
 });
+
+test('a known Foodland storefront origin is allowed by CORS', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise(resolve => server.once('listening', resolve));
+  const { port } = server.address();
+
+  // Regression test for a production incident: this exact origin was
+  // rejected because ALLOWED_ORIGINS on Railway didn't include it, silently
+  // breaking the DE storefront's live-orders and reviews widgets with only
+  // a browser-console CORS error to go on.
+  const response = await fetch(`http://127.0.0.1:${port}/health`, {
+    headers: { origin: 'https://www.foodland.at' }
+  });
+
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://www.foodland.at');
+});
+
+test('a disallowed CORS origin is rejected and logged for diagnosis', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise(resolve => server.once('listening', resolve));
+  const { port } = server.address();
+
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => { warnings.push(args.join(' ')); };
+  t.after(() => { console.warn = originalWarn; });
+
+  const response = await fetch(`http://127.0.0.1:${port}/health`, {
+    headers: { origin: 'https://evil.example' }
+  });
+
+  assert.equal(response.headers.get('access-control-allow-origin'), null);
+  assert.ok(
+    warnings.some(w => w.includes('CORS rejected origin "https://evil.example"')),
+    'expected a CORS rejection warning naming the origin, so a misconfiguration like this is diagnosable from server logs alone'
+  );
+});
