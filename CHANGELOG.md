@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.5
+
+- Added one-code multilingual live-order modules for SK, CZ, DE, EN, PL, HU and VI.
+- Localized product names, images and destination links using Foodland's shared product ID.
+- Expanded CORS defaults to every Foodland language host.
+
 ## v1.5.2
 
 - Reads three pages of the official NajNakup.sk shop-opinions widget (10 reviews each) before trying the public profile pages.

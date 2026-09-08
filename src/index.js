@@ -11,7 +11,7 @@ import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAG
 
 const { Pool } = pg;
 
-const VERSION = '1.5.4';
+const VERSION = '1.5.5';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -25,7 +25,16 @@ const REVIEWS_REFRESH_HOUR_LOCAL = Number.isInteger(configuredReviewHour) && con
   : 15;
 const REVIEWS_TIME_ZONE = process.env.REVIEWS_TIME_ZONE || 'Europe/Bratislava';
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://www.foodland.sk,https://foodland.sk')
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
+  'https://www.foodland.sk',
+  'https://foodland.sk',
+  'https://www.foodland-express.cz',
+  'https://www.foodland.at',
+  'https://www.foodland-express.com',
+  'https://www.foodland-express.pl',
+  'https://www.foodland.hu',
+  'https://vn.foodland.sk'
+].join(','))
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
@@ -344,6 +353,94 @@ function extractProductPageImage(html = '', productUrl = '') {
 
 const productImageCache = new Map();
 
+const LIVE_LANG_HOSTS = Object.freeze({
+  sk: 'www.foodland.sk',
+  cz: 'www.foodland-express.cz',
+  de: 'www.foodland.at',
+  en: 'www.foodland-express.com',
+  pl: 'www.foodland-express.pl',
+  hu: 'www.foodland.hu',
+  vi: 'vn.foodland.sk'
+});
+
+function normalizeLiveLanguage(value = 'sk') {
+  const lang = String(value).trim().toLowerCase();
+  if (lang.startsWith('cs') || lang.startsWith('cz')) return 'cz';
+  const short = lang.slice(0, 2);
+  return LIVE_LANG_HOSTS[short] ? short : 'sk';
+}
+
+function extractProductId(product = {}) {
+  for (const raw of [product.product_url, product.image_url]) {
+    if (!raw) continue;
+    try {
+      const id = new URL(raw, 'https://www.foodland.sk').searchParams.get('product_id');
+      if (/^\d+$/.test(id || '')) return id;
+    } catch {}
+
+    const filenameMatch = String(raw).match(/-(\d+)(?:\.[a-z0-9]+)?(?:[?#]|$)/i);
+    if (filenameMatch) return filenameMatch[1];
+  }
+  return null;
+}
+
+function extractLocalizedProductPage(html = '', pageUrl = '') {
+  if (!html) return null;
+  const $ = cheerio.load(html);
+  const rawTitle =
+    $('meta[property="og:title"]').attr('content') ||
+    $('title').first().text();
+  const title = String(rawTitle || '')
+    .replace(/\s*\|\s*Foodland.*$/i, '')
+    .trim();
+  if (!title) return null;
+
+  const rawImage =
+    $('meta[property="og:image"]').attr('content') ||
+    $('meta[name="twitter:image"]').attr('content');
+  let imageUrl = null;
+  try {
+    if (rawImage) imageUrl = new URL(rawImage, pageUrl).toString();
+  } catch {}
+
+  return { product_name: title, product_url: pageUrl, image_url: imageUrl };
+}
+
+const localizedProductCache = new Map();
+
+async function localizeLiveProduct(product, language) {
+  const lang = normalizeLiveLanguage(language);
+  if (lang === 'sk') return product;
+
+  const productId = extractProductId(product);
+  if (!productId) return null;
+  const cacheKey = lang + ':' + productId;
+  if (localizedProductCache.has(cacheKey)) {
+    const cached = localizedProductCache.get(cacheKey);
+    return cached ? { ...product, ...cached } : null;
+  }
+
+  const pageUrl = new URL('/index.php', 'https://' + LIVE_LANG_HOSTS[lang]);
+  pageUrl.searchParams.set('option', 'com_shop');
+  pageUrl.searchParams.set('page', 'shop.product_details');
+  pageUrl.searchParams.set('flypage', 'shop.flypage');
+  pageUrl.searchParams.set('product_id', productId);
+
+  let localized = null;
+  try {
+    const response = await fetch(pageUrl, {
+      signal: AbortSignal.timeout(10000),
+      headers: { 'user-agent': 'Foodland-Live-Commerce/' + VERSION }
+    });
+    if (response.ok) localized = extractLocalizedProductPage(await response.text(), pageUrl.toString());
+  } catch (e) {
+    console.warn('Product localization failed:', { productId, lang, error: e.message });
+  }
+
+  localizedProductCache.set(cacheKey, localized);
+  return localized ? { ...product, ...localized } : null;
+}
+
 async function resolveProductPageImage(productUrl) {
   if (productImageCache.has(productUrl)) return productImageCache.get(productUrl);
 
@@ -609,6 +706,8 @@ app.get('/health', async (_req, res) => {
 app.get('/api/live/recent', async (req, res) => {
   const limit = Math.min(30, Math.max(1, Number(req.query.limit || 10)));
   const hours = Math.min(168, Math.max(1, Number(req.query.hours || RECENT_MAX_AGE_HOURS)));
+  const lang = normalizeLiveLanguage(req.query.lang);
+  const queryLimit = lang === 'sk' ? limit : Math.min(90, limit * 3);
 
   const { rows } = await pool.query(`
     SELECT
@@ -622,10 +721,16 @@ app.get('/api/live/recent', async (req, res) => {
     WHERE ordered_at >= NOW() - ($1::text || ' hours')::interval
     ORDER BY ordered_at DESC
     LIMIT $2
-  `, [String(hours), limit]);
+  `, [String(hours), queryLimit]);
+
+  const items = lang === 'sk'
+    ? rows
+    : (await Promise.all(rows.map(row => localizeLiveProduct(row, lang))))
+      .filter(Boolean)
+      .slice(0, limit);
 
   res.set('Cache-Control', 'public, max-age=30');
-  res.json({ items: rows });
+  res.json({ lang, items });
 });
 
 app.get('/api/live/summary', async (_req, res) => {
@@ -811,6 +916,25 @@ app.get('/widget.js', (_req, res) => {
     vi: { recent: 'Vừa được mua', ago: '{n} phút trước', today: 'Hôm nay đã đặt {n}×' }
   }[lang];
 
+  Object.assign(dict, {
+    sk: { mobileTitle: 'Práve nakupujú', mobileSubtitle: 'Najnovšie objednané produkty', swipe: 'Potiahnite →', sidebarTitle: 'Najnovšie objednávky', showMore: 'Zobraziť viac objednávok', showLess: 'Zobraziť menej objednávok', region: 'Najnovšie objednané produkty' },
+    cz: { mobileTitle: 'Právě nakupují', mobileSubtitle: 'Nejnověji objednané produkty', swipe: 'Posuňte →', sidebarTitle: 'Nejnovější objednávky', showMore: 'Zobrazit více objednávek', showLess: 'Zobrazit méně objednávek', region: 'Nejnověji objednané produkty' },
+    de: { mobileTitle: 'Wird gerade gekauft', mobileSubtitle: 'Zuletzt bestellte Produkte', swipe: 'Wischen →', sidebarTitle: 'Neueste Bestellungen', showMore: 'Weitere Bestellungen anzeigen', showLess: 'Weniger Bestellungen anzeigen', region: 'Zuletzt bestellte Produkte' },
+    en: { mobileTitle: 'Shopping now', mobileSubtitle: 'Recently ordered products', swipe: 'Swipe →', sidebarTitle: 'Latest orders', showMore: 'Show more orders', showLess: 'Show fewer orders', region: 'Recently ordered products' },
+    pl: { mobileTitle: 'Właśnie kupują', mobileSubtitle: 'Ostatnio zamówione produkty', swipe: 'Przesuń →', sidebarTitle: 'Najnowsze zamówienia', showMore: 'Pokaż więcej zamówień', showLess: 'Pokaż mniej zamówień', region: 'Ostatnio zamówione produkty' },
+    hu: { mobileTitle: 'Most vásárolnak', mobileSubtitle: 'Legutóbb rendelt termékek', swipe: 'Húzza el →', sidebarTitle: 'Legújabb rendelések', showMore: 'További rendelések', showLess: 'Kevesebb rendelés', region: 'Legutóbb rendelt termékek' },
+    vi: { mobileTitle: 'Khách đang mua', mobileSubtitle: 'Sản phẩm vừa được đặt', swipe: 'Vuốt →', sidebarTitle: 'Đơn hàng mới nhất', showMore: 'Xem thêm đơn hàng', showLess: 'Thu gọn đơn hàng', region: 'Sản phẩm vừa được đặt' }
+  }[lang]);
+
+  document.querySelectorAll('[data-fl-live-copy]').forEach(function (element) {
+    const key = element.dataset.flLiveCopy;
+    if (dict[key]) element.textContent = dict[key];
+  });
+  document.querySelectorAll('[data-fl-live-aria]').forEach(function (element) {
+    const key = element.dataset.flLiveAria;
+    if (dict[key]) element.setAttribute('aria-label', dict[key]);
+  });
+
   function esc(s) {
     return String(s || '').replace(/[&<>"']/g, function(c) {
       return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
@@ -932,7 +1056,7 @@ app.get('/widget.js', (_req, res) => {
   async function load() {
     try {
       const [recentRes, summaryRes] = await Promise.all([
-        fetch(api + '/api/live/recent?limit=12&hours=48', { cache: 'no-store' }),
+        fetch(api + '/api/live/recent?limit=12&hours=48&lang=' + encodeURIComponent(lang), { cache: 'no-store' }),
         mode === 'recent'
           ? Promise.resolve(null)
           : fetch(api + '/api/live/summary', { cache: 'no-store' })
@@ -1106,6 +1230,8 @@ if (isDirectRun) {
 export {
   app,
   extractProducts,
+  extractProductId,
+  extractLocalizedProductPage,
   extractProductPageImage,
   findImageForProduct,
   millisecondsUntilReviewRefresh,

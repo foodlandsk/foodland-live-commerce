@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { app, extractProducts, extractProductPageImage, VERSION } from '../src/index.js';
+import { app, extractProducts, extractProductId, extractLocalizedProductPage, extractProductPageImage, VERSION } from '../src/index.js';
 
 test('extractProducts keeps each image in its own product row', () => {
   const html = `
@@ -44,6 +44,24 @@ test('extractProductPageImage reads a Foodland og:image safely', () => {
     extractProductPageImage('<meta property="og:image" content="https://evil.example/image.jpg">', 'https://www.foodland.sk/p/x/'),
     null
   );
+});
+
+test('live products use the shared Foodland product id for localization', () => {
+  assert.equal(extractProductId({
+    image_url: 'https://www.foodland.sk/sub/foodland.sk/shop/product/pho-bo-vifon-120g-2561.jpg'
+  }), '2561');
+  assert.equal(extractProductId({
+    product_url: 'https://www.foodland.at/index.php?product_id=2561'
+  }), '2561');
+
+  const localized = extractLocalizedProductPage(
+    '<title>PHO BO Instant beef soup with meat HOANG GIA VIFON 120 g | Foodland</title>' +
+    '<meta property="og:image" content="/sub/foodland.sk/shop/product/pho-bo-2561.jpg">',
+    'https://www.foodland-express.com/index.php?product_id=2561'
+  );
+  assert.equal(localized.product_name, 'PHO BO Instant beef soup with meat HOANG GIA VIFON 120 g');
+  assert.match(localized.product_url, /foodland-express\.com/);
+  assert.match(localized.image_url, /foodland-express\.com/);
 });
 
 test('UPSERT repairs images and protects an existing image from NULL', async () => {
@@ -111,9 +129,11 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /textTargets\.forEach/);
   assert.match(body, /Vừa được mua/);
   assert.match(body, /api\/live\/recent/);
+  assert.match(body, /data-fl-live-copy/);
+  assert.match(body, /encodeURIComponent\(lang\)/);
   assert.match(body, /MutationObserver/);
   assert.match(body, /__foodlandLiveCommerceStarted/);
-  assert.equal(VERSION, '1.5.4');
+  assert.equal(VERSION, '1.5.5');
 });
 
 test('Review widget JavaScript is served independently from live orders', async (t) => {

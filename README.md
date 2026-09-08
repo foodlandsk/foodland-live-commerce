@@ -2,7 +2,12 @@
 
 Live purchase/social-proof backend for Foodland.sk.
 
-Current release: **v1.5.4**.
+Current release: **v1.5.5**.
+
+Live-order widgets can be reused unchanged across all Foodland mutations. The
+client detects the document language and requests `/api/live/recent?lang=...`.
+The API resolves the same catalog item through its shared `product_id` and
+returns the official localized product name, image and Foodland host link.
 
 Reviews are loaded primarily from the verified Foodland Express PHP proxy. The
 URL defaults to `https://foodland-express.sk/foodland-najnakup-reviews.php` and
