@@ -44,7 +44,13 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
   'https://vn.foodland.sk'
 ].join(','))
   .split(',')
-  .map(s => s.trim())
+  // A stray trailing slash on one ALLOWED_ORIGINS entry (a very easy Railway
+  // Variables typo) would otherwise never match the Origin header a browser
+  // sends, which never has a trailing slash — and silently block that whole
+  // storefront with no server-side signal, only a browser console CORS
+  // error nobody sees. Strip it so that class of misconfiguration can't
+  // happen invisibly.
+  .map(s => s.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
 const pool = new Pool({
@@ -59,6 +65,12 @@ app.use(express.json());
 app.use(cors({
   origin(origin, cb) {
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    // Without this, a misconfigured/incomplete ALLOWED_ORIGINS silently
+    // breaks a storefront with only a browser-console CORS error to go on —
+    // as happened in production for https://www.foodland.at. Logging the
+    // rejected origin and the currently-configured list makes that
+    // diagnosable from Railway logs alone.
+    console.warn(`CORS rejected origin "${origin}". Allowed origins: ${allowedOrigins.join(', ') || '(none configured)'}`);
     return cb(null, false);
   }
 }));
