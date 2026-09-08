@@ -11,7 +11,7 @@ import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAG
 
 const { Pool } = pg;
 
-const VERSION = '1.5.6';
+const VERSION = '1.6.0';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));

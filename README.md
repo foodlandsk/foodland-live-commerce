@@ -1,296 +1,74 @@
 # Foodland Live Commerce
 
-Live purchase/social-proof backend for Foodland.sk.
+Jeden GitHub projekt a jedna Railway služba pre:
 
-Current release: **v1.5.6**.
+- anonymizované Live nákupy z objednávkových e-mailov,
+- 30 najnovších hodnotení z NajNakup.sk,
+- automatické preklady recenzií do SK, CZ, DE, EN, PL, HU a VI,
+- CreativeSites skripty a hotové jazykové moduly.
 
-Live-order widgets can be reused unchanged across all Foodland mutations. The
-client detects the document language and requests `/api/live/recent?lang=...`.
-The API resolves the same catalog item through its shared `product_id` and
-returns the official localized product name, image and Foodland host link.
+Aktuálna verzia: **1.6.0**
 
-Reviews are loaded primarily from the verified Foodland Express PHP proxy. The
-URL defaults to `https://foodland-express.sk/foodland-najnakup-reviews.php` and
-can be overridden with the optional `REVIEWS_PROXY_URL` environment variable.
-Daily refresh defaults to 15:00 in `Europe/Bratislava`, including daylight-saving
-changes. Override it with `REVIEWS_REFRESH_HOUR_LOCAL` and `REVIEWS_TIME_ZONE`.
-
-## What it does
-
-- reads forwarded Foodland order confirmations from a dedicated Websupport mailbox via IMAP;
-- extracts product name, product URL, product image, quantity and order time;
-- hashes the order number to prevent duplicates;
-- does **not** persist customer name, e-mail, phone or delivery address;
-- stores anonymized purchase events in PostgreSQL;
-- exposes recent purchases and 24h/7d product statistics;
-- serves a multilingual JavaScript widget for the Foodland Infowidget.
-- imports the latest 30 Foodland reviews from NajNakup.sk once a day;
-- keeps the last successful review data available during a source outage;
-- exposes localized review data and a CreativeSites-compatible review widget.
-
-## Repository structure
+## Štruktúra
 
 ```text
 foodland-live-commerce/
 ├── src/
-│   └── index.js
+│   ├── index.js
+│   └── reviews.js
+├── test/
+├── modules/
+│   ├── live-orders/
+│   └── reviews/
+├── proxy/
+│   └── foodland-najnakup-reviews.php
 ├── .env.example
-├── .gitignore
 ├── package.json
 ├── Procfile
-├── railway.json
-├── README.md
-└── SECURITY.md
+└── railway.json
 ```
 
-## Deploy to Railway
+## Nasadenie
 
-This v1.2 removes the legacy Nixpacks builder override. Railway can use its current default build system and starts the app directly with `node src/index.js`.
+1. Nahrajte obsah tohto priečinka do koreňa jediného GitHub repozitára.
+2. Railway pripojte k tomuto repozitáru.
+3. V rovnakom Railway projekte ponechajte PostgreSQL.
+4. Premenné nastavte podľa `.env.example`; heslá a tokeny patria iba do Railway, nikdy do GitHubu.
+5. Súbor `proxy/foodland-najnakup-reviews.php` nahrajte na `foodland-express.sk`.
 
-### 1. GitHub
+Recenzie sa obnovujú denne o **21:00 Europe/Bratislava**, automaticky podľa letného aj zimného času.
 
-Create a private repository named:
+## Verejné endpointy
 
-`foodland-live-commerce`
+| Funkcia | Endpoint |
+|---|---|
+| Stav služby | `GET /health` |
+| Najnovšie nákupy | `GET /api/live/recent` |
+| Súhrn nákupov | `GET /api/live/summary` |
+| Skript Live nákupov | `GET /widget.js` |
+| Recenzie | `GET /api/reviews?lang=sk&limit=30` |
+| Skript recenzií | `GET /reviews-widget.js` |
+| Ručná obnova recenzií | `POST /admin/refresh-reviews` |
+| Opätovné načítanie e-mailov | `POST /admin/rescan` |
 
-Upload the **contents of this folder** to the repository root.
+Administrátorské endpointy vyžadujú hlavičku `x-admin-token`.
 
-Do not upload a `.env` file and never put passwords into GitHub.
+## CreativeSites
 
-### 2. Railway
+- Recenzie: vložte príslušný celý súbor z `modules/reviews/` do každej jazykovej mutácie.
+- Live nákupy: použite modul z `modules/live-orders/`; skript rozpozná jazyk stránky.
+- Nepoužívajte pôvodný NajNakup iframe spolu s vlastným modulom recenzií.
 
-Create a Railway project from the GitHub repository. Railway will detect the Node.js app automatically; the repository also contains `railway.json` with the explicit start command `node src/index.js`.
+## Kontrola
 
-Add a PostgreSQL service to the same Railway project. Railway normally
-provides `DATABASE_URL` to the application when the database is connected.
-
-### 3. Railway Variables
-
-Set:
-
-```text
-MAIL_HOST=imap.websupport.sk
-MAIL_PORT=993
-MAIL_SECURE=true
-MAIL_USER=orders-live@foodland.sk
-MAIL_PASSWORD=YOUR_TECHNICAL_MAILBOX_PASSWORD
-MAIL_FOLDER=INBOX
-
-POLL_SECONDS=60
-PROCESS_UNSEEN_ONLY=true
-
-PGSSL=true
-ALLOWED_ORIGINS=https://www.foodland.sk,https://foodland.sk
-
-ADMIN_TOKEN=GENERATE_A_LONG_RANDOM_SECRET
-RECENT_MAX_AGE_HOURS=48
-
-# Daily NajNakup.sk refresh (03:00 UTC by default)
-REVIEWS_REFRESH_HOUR_UTC=3
-
-# Optional: translate new Slovak reviews to CZ/DE/EN/PL/HU/VI.
-# Without these variables, every language safely falls back to Slovak review text.
-OPENAI_API_KEY=YOUR_OPTIONAL_OPENAI_API_KEY
-REVIEWS_TRANSLATION_MODEL=gpt-4.1-mini
+```bash
+npm install
+npm test
+npm start
 ```
 
-`PORT` is supplied by Railway.
+Po nasadení musí `/health` vrátiť `"version":"1.6.0"`.
 
-### 4. Verify deployment
+## Ochrana údajov
 
-Open:
-
-```text
-https://YOUR-RAILWAY-DOMAIN.up.railway.app/health
-```
-
-Expected result:
-
-```json
-{
-  "ok": true,
-  "service": "foodland-live-commerce",
-  "mailbox": "configured"
-}
-```
-
-Then test:
-
-```text
-https://YOUR-RAILWAY-DOMAIN.up.railway.app/api/live/recent
-```
-
-and:
-
-```text
-https://YOUR-RAILWAY-DOMAIN.up.railway.app/api/live/summary
-```
-
-## Foodland Infowidget
-
-After the backend is working, add this in the Infowidget HTML source:
-
-```html
-<span
-  id="foodland-live-commerce"
-  data-api="https://YOUR-RAILWAY-DOMAIN.up.railway.app"
-  data-interval="12000">
-  Práve obľúbené produkty našich zákazníkov
-</span>
-
-<script
-  src="https://YOUR-RAILWAY-DOMAIN.up.railway.app/widget.js"
-  defer>
-</script>
-```
-
-Supported storefront languages:
-
-- SK
-- CZ/CS
-- DE
-- EN
-- PL
-- HU
-- VI
-
-### Live order inside a seamless ticker
-
-For a CSS ticker that duplicates its messages, add the attribute
-`data-foodland-live-commerce` to the live-order item in both halves. Put
-`data-api` and `data-interval` on the first copy. The client updates every
-matching item at the same time, so both ticker halves retain identical widths.
-
-```html
-<span
-  data-foodland-live-commerce
-  data-api="https://YOUR-RAILWAY-DOMAIN.up.railway.app"
-  data-mode="recent"
-  data-interval="12000">
-  Loading latest order…
-</span>
-<span data-foodland-live-commerce>Loading latest order…</span>
-
-<script
-  src="https://YOUR-RAILWAY-DOMAIN.up.railway.app/widget.js"
-  defer>
-</script>
-```
-
-### Compact live-order cards in a prefooter
-
-Use `data-layout="cards"` on a horizontally scrollable container. The client
-renders up to 12 recent purchases with each product's own `image_url`, product
-link, localized relative time and two-line product name. The container CSS stays
-in CreativeSites; load `widget.js` separately through GTM. Optional sibling
-buttons with the classes `fl-live-prefooter__arrow--prev` and
-`fl-live-prefooter__arrow--next` receive working paged navigation automatically.
-The loader also observes late CreativeSites DOM insertion for up to 30 seconds,
-so a DOM Ready GTM trigger can initialize modules added shortly afterward.
-
-```html
-<div
-  class="fl-live-cards"
-  data-foodland-live-commerce
-  data-api="https://YOUR-RAILWAY-DOMAIN.up.railway.app"
-  data-mode="recent"
-  data-layout="cards">
-  Loading latest orders…
-</div>
-```
-
-## Public endpoints
-
-### `GET /health`
-
-Application/database health.
-
-### `GET /api/live/recent`
-
-Recent anonymized purchase events.
-
-Optional parameters:
-
-- `limit`
-- `hours`
-
-### `GET /api/live/summary`
-
-Aggregated product popularity for the last 24 hours and 7 days.
-
-### `GET /widget.js`
-
-Foodland Infowidget client.
-
-### `GET /api/reviews?lang=sk&limit=30`
-
-Latest cached NajNakup.sk reviews and current aggregate statistics. Supported
-languages: `sk`, `cz`, `de`, `en`, `pl`, `hu`, `vi`.
-
-### `GET /reviews-widget.js`
-
-Dynamic customer-review client. It updates the embedded fallback reviews only
-after a successful API response.
-
-### `POST /admin/refresh-reviews`
-
-Runs the NajNakup.sk import immediately. Requires `x-admin-token`. The automatic
-refresh runs once per day at `REVIEWS_REFRESH_HOUR_UTC`.
-
-### `POST /admin/repair-images?hours=48`
-
-Repairs stored product image URLs directly from Foodland product-page metadata. Requires `x-admin-token`.
-
-## Admin endpoint
-
-`POST /admin/rescan`
-
-Requires:
-
-```text
-x-admin-token: YOUR_ADMIN_TOKEN
-```
-
-This can rescan recent mailbox messages. Keep the token secret.
-
-## Production workflow
-
-```text
-Creative Sites order
-        ↓
-eshop@foodland.sk
-        ↓ mail filter / copy
-orders-live@foodland.sk
-        ↓ IMAP
-Foodland Live Commerce
-        ↓
-PostgreSQL
-        ↓
-API + widget.js
-        ↓
-Foodland Infowidget
-```
-
-## Important
-
-Start with test orders. Verify that the parser correctly extracts the
-real HTML generated by Creative Sites before relying on the data for
-public social proof.
-
-
-## Upgrade to v1.4
-
-No Railway configuration changes are required.
-
-After pushing v1.4 to GitHub, Railway can redeploy automatically.
-
-Verify:
-
-```text
-/health
-/api/live/recent
-```
-
-`/health` should include `"version":"1.4.3"`.
-
-Run `POST /admin/rescan` once after deployment. Existing purchase rows are then updated by UPSERT. Ambiguous e-mail images are resolved from the corresponding product page, so corrected `image_url` values are applied without a database migration.
+Projekt neukladá meno zákazníka, e-mail, telefón ani adresu z objednávok. Číslo objednávky sa ukladá iba ako hash. Pri recenziách sa ukladajú iba verejne zobrazené meno, dátum, text, odporúčanie a typ zákazníka.

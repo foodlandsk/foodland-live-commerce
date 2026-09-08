@@ -1,0 +1,71 @@
+<!-- ⭐ FOODLAND modul: Ověřená hodnocení zákazníků – CZ verze -->
+
+<style type="text/css">
+.foodland-review-slider{font-family:"Open Sans",sans-serif;max-width:1280px;margin:3rem auto;padding:1.5rem;background:#fdfdfd;border:1px solid #eee;border-radius:16px;box-shadow:4px 4px 20px rgba(0,0,0,.08);overflow:hidden}
+.foodland-review-title{text-align:center;font-size:1.6rem;color:#222;margin-bottom:.35rem;display:flex;justify-content:center;align-items:center;gap:.75rem;flex-wrap:wrap}
+.foodland-review-updated{text-align:center;color:#999;font-size:.85rem;margin:0 0 1.75rem 0}
+.foodland-review-viewport{overflow:hidden;width:100%}
+.foodland-review-track{display:flex;gap:1.5rem}
+.foodland-review-card{flex:0 0 calc((100% - 3rem)/3);max-width:calc((100% - 3rem)/3);background:#fff;border:1px solid #ddd;border-radius:12px;padding:1rem;box-sizing:border-box;height:215px;display:flex;flex-direction:column;text-align:left}
+.foodland-review-nav{display:flex;justify-content:flex-end;align-items:center;margin-top:2rem;gap:1rem;flex-wrap:wrap}
+.foodland-review-dots{display:flex;gap:.5rem;flex-wrap:nowrap;align-items:center}
+.foodland-review-dot{min-width:38px;width:38px;height:38px;border-radius:50%;background:#fff;color:#666;display:flex;align-items:center;justify-content:center;font-weight:bold;cursor:pointer;border:1px solid transparent;font-size:14px}
+.foodland-review-dot.active{background:#e53935;color:#fff}
+.foodland-review-dot.disabled{cursor:default;pointer-events:none;background:transparent;color:#999;min-width:22px;width:22px}
+.foodland-review-arrow{font-size:14px;width:38px;height:38px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;cursor:pointer;color:#666}
+@media (max-width:768px){.foodland-review-card{flex:0 0 100%;max-width:100%;height:auto;min-height:190px}.foodland-review-nav{justify-content:flex-end;gap:.5rem}.foodland-review-dot,.foodland-review-arrow{min-width:32px;width:32px;height:32px;font-size:13px}.foodland-review-dot.disabled{min-width:18px;width:18px}}
+</style>
+
+<div class="foodland-review-slider" data-foodland-reviews data-lang="cz">
+  <h3 class="foodland-review-title"><img alt="Najnakup.sk" src="https://www.foodland.sk/sub/foodland.sk/images/images/LOGO_NAJNAKUP.SK_(100_x_100_px).svg" style="width:48px;height:48px;" /><span>⭐ NajNakup.sk • 98 % zákazníků doporučuje FOODLAND</span></h3>
+  <p class="foodland-review-updated">Nejnovějších 30 hodnocení z NajNakup.sk • celkem 6 072 hodnocení • Aktualizováno: 22.08.2026</p>
+  <div class="foodland-review-viewport"><div class="foodland-review-track" id="foodlandReviewTrack"></div></div>
+  <div class="foodland-review-nav"><button class="foodland-review-arrow" onclick="foodlandSlideReviews(-1)" aria-label="Předchozí hodnocení">&lsaquo;</button><div class="foodland-review-dots" id="foodlandReviewDots"></div><button class="foodland-review-arrow" onclick="foodlandSlideReviews(1)" aria-label="Další hodnocení">&rsaquo;</button></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+ const slider=document.getElementById('foodlandReviewTrack'),dotNav=document.getElementById('foodlandReviewDots');if(!slider||!dotNav)return;
+ let perPage=window.innerWidth<=768?1:3,totalPages=0,currentIndex=0;
+ const reviewsData=[
+    { name:"Ján", label:"pravidelný zákazník", date:"21.08.2026", text:"Velký výběr, dobré ceny a rychlé dodání." },
+    { name:"Lukas", label:"pravidelný zákazník", date:"20.08.2026", text:"Nakupuji pravidelně. Zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Stano", label:"ověřený zákazník", date:"20.08.2026", text:"Druhý nákup a zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Pavol", label:"ověřený zákazník", date:"20.08.2026", text:"Rychlost od nákupu po doručení." },
+    { name:"Rasti T.", label:"pravidelný zákazník", date:"19.08.2026", text:"Kvalita produktu a rychlé dodání. Žádné mínusy." },
+    { name:"Marek", label:"ověřený zákazník", date:"19.08.2026", text:"První nákup v tomto obchodě." },
+    { name:"Gabriel", label:"ověřený zákazník", date:"18.08.2026", text:"Dobrý výběr asijských potravin. Nejen základní věci, ale i speciální vychytávky." },
+    { name:"Hanka", label:"ověřený zákazník", date:"16.08.2026", text:"Díky za super rychlé dodání zboží." },
+    { name:"DeDe", label:"pravidelný zákazník", date:"16.08.2026", text:"Nakupuji pravidelně. Zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Stefan", label:"pravidelný zákazník", date:"15.08.2026", text:"Dochvilnost. Nemám žádné mínusy." },
+    { name:"martin", label:"ověřený zákazník", date:"14.08.2026", text:"Druhý nákup a zboží bylo doručeno v deklarovaném termínu." },
+    { name:"D", label:"ověřený zákazník", date:"14.08.2026", text:"Rychlost dodání." },
+    { name:"kika", label:"ověřený zákazník", date:"13.08.2026", text:"Spokojenost." },
+    { name:"Katarína", label:"pravidelný zákazník", date:"13.08.2026", text:"Nakupuji pravidelně. Zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Martina", label:"ověřený zákazník", date:"12.08.2026", text:"Super rychlé doručení. Vše perfektně zabalené a sklo zabezpečené. Spokojenost!" },
+    { name:"Zdemir", label:"pravidelný zákazník", date:"11.08.2026", text:"Netradiční produkty asijského typu." },
+    { name:"Milda", label:"ověřený zákazník", date:"10.08.2026", text:"Rychlost. Zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Kovacs", label:"ověřený zákazník", date:"08.08.2026", text:"První nákup a zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Jozef", label:"pravidelný zákazník", date:"07.08.2026", text:"Nakupuji pravidelně. Zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Daša", label:"ověřený zákazník", date:"07.08.2026", text:"Rychlé dodání." },
+    { name:"Magdaléna", label:"pravidelný zákazník", date:"06.08.2026", text:"Rychlost dodání a dobrá cena zboží. Nemám žádné mínusy." },
+    { name:"Sabina", label:"pravidelný zákazník", date:"06.08.2026", text:"Nakupuji pravidelně. Zboží bylo doručeno v deklarovaném termínu." },
+    { name:"marek", label:"pravidelný zákazník", date:"06.08.2026", text:"Rychlý nákup, super doručení, dobré zboží. Osobně žádné mínusy." },
+    { name:"Lívia", label:"ověřený zákazník", date:"05.08.2026", text:"První nákup a zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Milan", label:"ověřený zákazník", date:"04.08.2026", text:"Rychlý nákup." },
+    { name:"Riso", label:"ověřený zákazník", date:"04.08.2026", text:"Spousta zajímavého zboží." },
+    { name:"Peter", label:"ověřený zákazník", date:"04.08.2026", text:"Zboží skladem a rychlé doručení." },
+    { name:"Zdenka", label:"ověřený zákazník", date:"03.08.2026", text:"Našla jsem přesně to, co v běžných obchodech není – například rýžový papír." },
+    { name:"Anna", label:"ověřený zákazník", date:"03.08.2026", text:"První nákup a zboží bylo doručeno v deklarovaném termínu." },
+    { name:"Gabriela", label:"ověřený zákazník", date:"03.08.2026", text:"První nákup a zboží bylo doručeno v deklarovaném termínu." }
+  ];
+ function createReviewCard(r){const card=document.createElement('div');card.className='foodland-review-card';card.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;"><p style="font-size:.85rem;color:#2e7d32;font-weight:600;margin:0;">✓ NajNakup.sk</p><p style="font-size:.85rem;color:#999;margin:0;">${r.date}</p></div><p style="font-style:italic;color:#444;margin:0 0 1rem 0;line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;">${r.text}</p><p style="color:#222;font-weight:bold;margin-top:auto;">${r.name}<span style="display:block;color:#999;font-size:.82rem;font-weight:400;margin-top:2px;">${r.label}</span></p>`;return card}
+ function renderCurrentPage(){slider.innerHTML='';slider.style.transform='translateX(0)';reviewsData.slice(currentIndex*perPage,currentIndex*perPage+perPage).forEach(r=>slider.appendChild(createReviewCard(r)));updateDots()}
+ function updateDots(){dotNav.innerHTML='';const maxVisible=5;function createDot(i,text){const dot=document.createElement('div');dot.classList.add('foodland-review-dot');if(i===null){dot.classList.add('disabled');dot.textContent=text||'...'}else{if(i===currentIndex)dot.classList.add('active');dot.textContent=text||(i+1);dot.onclick=function(){goToPage(i)}}dotNav.appendChild(dot)}if(totalPages<=maxVisible){for(let i=0;i<totalPages;i++)createDot(i);return}createDot(0);if(currentIndex>2)createDot(null,'...');const start=Math.max(1,currentIndex-1),end=Math.min(totalPages-1,currentIndex+2);for(let i=start;i<end;i++)createDot(i);if(currentIndex<totalPages-3)createDot(null,'...');createDot(totalPages-1)}
+ function goToPage(index){if(index<0)index=0;if(index>=totalPages)index=totalPages-1;currentIndex=index;renderCurrentPage()}
+ window.foodlandSlideReviews=function(direction){goToPage(currentIndex+direction)};
+ function recalculatePagination(){perPage=window.innerWidth<=768?1:3;totalPages=Math.ceil(reviewsData.length/perPage);if(currentIndex>=totalPages)currentIndex=totalPages-1;renderCurrentPage()}
+ window.addEventListener('resize',recalculatePagination);recalculatePagination();
+});
+</script>
+<script src="https://live-orders-data-production.up.railway.app/reviews-widget.js?v=1.6.0" defer></script>
