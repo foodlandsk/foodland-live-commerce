@@ -177,7 +177,7 @@ at least one digit for real order numbers` (dĺžky 5, 6, 7, 12 aj hraničný pr
 
 ---
 
-## 🟠 5. Neobmedzené in-memory cache — pomalý memory leak a trvalé "zablokovanie" produktu
+## 🟠 5. Neobmedzené in-memory cache — pomalý memory leak a trvalé "zablokovanie" produktu — ✅ opravené
 
 **Súbor:** `src/index.js:354, 409-410, 440-441`
 
@@ -201,12 +201,15 @@ ekvivalentný "repair" endpoint neexistuje — jediný spôsob obnovy je reštar
 "vyradiť" z lokalizovaného feedu (v `/api/live/recent` sa taký produkt kvôli `.filter(Boolean)`
 jednoducho vynechá) na celé zvyšné behu služby.
 
-**Odporúčanie:** TTL alebo LRU eviction na oboch mapách; negatívne výsledky necachovať trvalo
-(napr. cachovať `null` len na niekoľko minút, nie navždy).
+**Oprava:** nový `createTtlCache()` helper (`src/index.js`) nahradil oba `Map`; pozitívne výsledky
+sa cachujú 24 h, negatívne (`null`) len 10 min, takže prechodné zlyhanie sa samo opraví pri
+ďalšom pokuse namiesto trvalého "zablokovania" a pamäť ostáva ohraničená na naposledy navštívené
+záznamy. Testy: `createTtlCache expires a failed (falsy) lookup quickly but keeps a successful
+one`, `createTtlCache.delete removes an entry before its TTL expires`.
 
 ---
 
-## 🟠 6. Konfiguračný drift: fallback hodina refreshu recenzií nezodpovedá zdokumentovanému zámeru
+## 🟠 6. Konfiguračný drift: fallback hodina refreshu recenzií nezodpovedá zdokumentovanému zámeru — ✅ opravené
 
 **Súbor:** `src/index.js:22-25` vs. `.env.example:15` a `CHANGELOG.md` (v1.6.0)
 
@@ -224,12 +227,13 @@ vymazanými env premennými, preklep v názve premennej) chýbala `REVIEWS_REFRE
 služba sa potichu prepne na refresh o 15:00 namiesto zdokumentovaných 21:00 — bez akéhokoľvek
 varovania alebo logu, ktorý by na tento rozdiel upozornil.
 
-**Odporúčanie:** zosúladiť fallback v kóde s `.env.example` (21), prípadne logovať explicitné
-varovanie pri páde na fallback hodnotu.
+**Oprava:** fallback v kóde je teraz `21` (`REVIEWS_REFRESH_HOUR_LOCAL_DEFAULT`, zhodné s
+`.env.example`) a pri neplatnej/nenastavenej hodnote sa navyše zaloguje explicitné `console.warn`.
+Test: `review refresh hour falls back to the documented 21:00 default when unset`.
 
 ---
 
-## 🟠 7. Duplicitná scraping logika NajNakup.sk na troch miestach — krehkosť voči zmene cudzej stránky
+## 🟠 7. Duplicitná scraping logika NajNakup.sk na troch miestach — krehkosť voči zmene cudzej stránky — 🟡 zmiernené
 
 **Súbory:** `proxy/foodland-najnakup-reviews.php:66-123`, `src/reviews.js:47-84` (`parseNajnakupPage`),
 `src/reviews.js:86-111` (`parseNajnakupWidgetPage`)
@@ -257,9 +261,21 @@ Navyše ani jeden z troch parserov nemá test proti aktuálnemu živému HTML z 
 `test/reviews.test.js:1-92` používajú ručne napísané, zjednodušené fixture HTML) — zmena
 skutočnej stránky sa teda v CI nikdy neprejaví, kým reálne nespadne produkčný refresh.
 
-**Odporúčanie:** zdieľať jeden parser (napr. preniesť PHP logiku aj do Node, alebo naopak) medzi
-primárnym a prvým fallbackom, aby redundancia reálne kryla nezávislé zlyhania; zvážiť
-snapshot/nahraté HTML fixture z produkcie pre regresné testy parserov.
+**Čiastočná oprava:** skutočné zdieľanie jedného parsera naprieč PHP (proxy, samostatný hosting)
+a Node (tento repozitár) by vyžadovalo hlbšiu infraštruktúrnu zmenu (napr. PHP proxy volajúci do
+Node, alebo naopak) — to je mimo rozsahu tejto opravy a nesie väčšie riziko regresie na
+produkčnom scrapingu bez možnosti overiť voči živej stránke z tohto prostredia. Namiesto toho:
+
+- `src/reviews.js` teraz exportuje `WIDGET_SELECTORS` (pomenované CSS selektory namiesto
+  reťazcových literálov roztrúsených v tele funkcie) a `proxy/foodland-najnakup-reviews.php` má
+  analogické `WIDGET_CLASS_*` konštanty — oba miesta majú komentár s explicitným krížovým
+  odkazom na to druhé ("ak zmeníš tieto selektory, zmeň aj..."), takže budúca úprava markupu je
+  viditeľne prepojená namiesto tichého rozídenia.
+- Poznámka o chýbajúcom teste proti živému HTML (`Odporúčanie` nižšie) zostáva otvorená —
+  vyžadovala by sieťový prístup k najnakup.sk z CI, čo je samostatné rozhodnutie.
+
+**Zvyšné odporúčanie:** zvážiť snapshot/nahraté HTML fixture z produkcie pre regresné testy
+parserov, aby zmena skutočnej stránky bola zachytená v CI, nie až pri páde produkčného refreshu.
 
 ---
 
@@ -324,15 +340,16 @@ textového tickeru, nie obnovu dát kariet.
 | 2 | Neobmedzený paralelný fan-out pri lokalizácii produktov | 🔴 | `src/index.js:726-730` | ✅ opravené |
 | 3 | Chybný DST offset v `parseOrderDate` (koniec marca/októbra) | 🔴 | `src/index.js:220-234` | ✅ opravené |
 | 4 | `maskOrderNumber` nemaskuje 5–6-miestne čísla | 🔴 | `src/index.js:205-209` | ✅ opravené |
-| 5 | Neobmedzené cache, trvalé cachovanie zlyhaní | 🟠 | `src/index.js:354,409,440` | otvorené |
-| 6 | Fallback hodina refreshu (15) nezodpovedá zámeru (21) | 🟠 | `src/index.js:22-25` | otvorené |
-| 7 | Duplicitné/korelované scraping parsery NajNakup.sk | 🟠 | `proxy/*.php`, `src/reviews.js` | otvorené |
+| 5 | Neobmedzené cache, trvalé cachovanie zlyhaní | 🟠 | `src/index.js` (`createTtlCache`) | ✅ opravené |
+| 6 | Fallback hodina refreshu (15) nezodpovedá zámeru (21) | 🟠 | `src/index.js:22-25` | ✅ opravené |
+| 7 | Duplicitné/korelované scraping parsery NajNakup.sk | 🟠 | `proxy/*.php`, `src/reviews.js` | 🟡 zmiernené |
 | 8 | `data-interval` na kartách je mŕtva konfigurácia | 🟡 | `modules/live-orders/*`, `src/index.js:1126` | otvorené |
 | 9 | Timing-safe token compare, rate limiting, testy na reťazce | 🟡 | viaceré | otvorené |
 
-Nálezy 1–4 (kritické) sú opravené v tomto commite (`src/index.js`, `test/index.test.js`).
-Nálezy 5–9 (stredné/nízke) zostávajú otvorené — nešlo o funkčné/bezpečnostné riziko rovnakej
-naliehavosti a ich oprava je samostatná úloha.
+Nálezy 1–6 (kritické + stredné) sú opravené. Nález 7 je zmiernený (pomenované, krížovo
+odkázané selektory v PHP aj JS namiesto tichej duplicity), no plné zdieľanie parsera naprieč
+PHP/Node zostáva otvorené — vyžaduje si väčšiu infraštruktúrnu zmenu mimo rozsahu tejto opravy.
+Nálezy 8–9 (nízke/hardening) zostávajú otvorené ako samostatná úloha.
 
 Žiadny z nálezov nespochybňuje základný dátový tok (IMAP → Postgres → API → widget); ide o
 okrajové prípady, ktoré sa prejavia pri chybnom vstupe, medzinárodnej prevádzke, prechode
