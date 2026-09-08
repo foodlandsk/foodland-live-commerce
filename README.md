@@ -2,7 +2,13 @@
 
 Live purchase/social-proof backend for Foodland.sk.
 
-Current release: **v1.5.2**.
+Current release: **v1.5.3**.
+
+Reviews are loaded primarily from the verified Foodland Express PHP proxy. The
+URL defaults to `https://foodland-express.sk/foodland-najnakup-reviews.php` and
+can be overridden with the optional `REVIEWS_PROXY_URL` environment variable.
+Daily refresh defaults to 15:00 in `Europe/Bratislava`, including daylight-saving
+changes. Override it with `REVIEWS_REFRESH_HOUR_LOCAL` and `REVIEWS_TIME_ZONE`.
 
 ## What it does
 

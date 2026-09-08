@@ -11,7 +11,7 @@ import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAG
 
 const { Pool } = pg;
 
-const VERSION = '1.5.2';
+const VERSION = '1.5.3';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -19,10 +19,11 @@ const MAIL_FOLDER = process.env.MAIL_FOLDER || 'INBOX';
 const PROCESS_UNSEEN_ONLY = String(process.env.PROCESS_UNSEEN_ONLY || 'true').toLowerCase() === 'true';
 const RECENT_MAX_AGE_HOURS = Math.max(1, Number(process.env.RECENT_MAX_AGE_HOURS || 48));
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-const configuredReviewHour = Number(process.env.REVIEWS_REFRESH_HOUR_UTC);
-const REVIEWS_REFRESH_HOUR_UTC = Number.isInteger(configuredReviewHour) && configuredReviewHour >= 0 && configuredReviewHour <= 23
+const configuredReviewHour = Number(process.env.REVIEWS_REFRESH_HOUR_LOCAL);
+const REVIEWS_REFRESH_HOUR_LOCAL = Number.isInteger(configuredReviewHour) && configuredReviewHour >= 0 && configuredReviewHour <= 23
   ? configuredReviewHour
-  : 13;
+  : 15;
+const REVIEWS_TIME_ZONE = process.env.REVIEWS_TIME_ZONE || 'Europe/Bratislava';
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://www.foodland.sk,https://foodland.sk')
   .split(',')
@@ -159,12 +160,24 @@ async function refreshCustomerReviews() {
   }
 }
 
-function millisecondsUntilReviewRefresh(hourUtc = REVIEWS_REFRESH_HOUR_UTC) {
+function millisecondsUntilReviewRefresh(hourLocal = REVIEWS_REFRESH_HOUR_LOCAL, timeZone = REVIEWS_TIME_ZONE) {
   const now = new Date();
-  const next = new Date(now);
-  next.setUTCHours(hourUtc, 0, 0, 0);
-  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
-  return next.getTime() - now.getTime();
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  });
+  const candidate = new Date(now.getTime() + 60000);
+  candidate.setUTCSeconds(0, 0);
+  for (let minute = 0; minute < 26 * 60; minute++) {
+    const parts = Object.fromEntries(formatter.formatToParts(candidate).map(part => [part.type, part.value]));
+    if (Number(parts.hour) === hourLocal && Number(parts.minute) === 0) {
+      return candidate.getTime() - now.getTime();
+    }
+    candidate.setUTCMinutes(candidate.getUTCMinutes() + 1);
+  }
+  throw new Error(`Cannot calculate review refresh for ${timeZone}`);
 }
 
 function scheduleDailyReviewRefresh() {

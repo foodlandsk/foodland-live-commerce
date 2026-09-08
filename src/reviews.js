@@ -4,6 +4,7 @@ import * as cheerio from 'cheerio';
 export const REVIEW_LANGUAGES = ['sk', 'cz', 'de', 'en', 'pl', 'hu', 'vi'];
 export const NAJNAKUP_REVIEW_URL = 'https://www.najnakup.sk/foodland-sk';
 export const NAJNAKUP_WIDGET_URL = 'https://www.najnakup.sk/dz_shop_opinions.aspx?w=8237';
+export const DEFAULT_REVIEWS_PROXY_URL = 'https://foodland-express.sk/foodland-najnakup-reviews.php';
 
 const browserHeaders = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
@@ -110,6 +111,48 @@ export function parseNajnakupWidgetPage(html = '') {
 }
 
 export async function fetchNajnakupReviews({ fetchImpl = fetch, pages = 2 } = {}) {
+  const proxyUrl = process.env.REVIEWS_PROXY_URL || DEFAULT_REVIEWS_PROXY_URL;
+  try {
+    const response = await fetchImpl(proxyUrl, {
+      signal: AbortSignal.timeout(45000),
+      redirect: 'follow',
+      headers: { accept: 'application/json', 'user-agent': browserHeaders['user-agent'] }
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (payload?.ok !== true || !Array.isArray(payload.items) || payload.items.length < 10) {
+      throw new Error('invalid or incomplete JSON');
+    }
+    const reviews = payload.items.slice(0, 30).map(review => ({
+      source_key: clean(review.source_key) || reviewKey(review),
+      name: clean(review.name),
+      date: clean(review.date),
+      text: clean(review.text),
+      recommended: review.recommended !== false,
+      customer_type: review.customer_type === 'regular' ? 'regular' : 'verified'
+    })).filter(review => review.name && /^\d{2}\.\d{2}\.\d{4}$/.test(review.date) && review.text);
+    if (reviews.length < 10) throw new Error('fewer than 10 valid reviews');
+    return {
+      stats: {
+        recommendation_percent: Number(payload.stats?.recommendation_percent || 0),
+        recommendation_90d_percent: Number(payload.stats?.recommendation_90d_percent || 0),
+        total_reviews: Number(payload.stats?.total_reviews || 0)
+      },
+      reviews,
+      source: 'foodland-express-proxy',
+      diagnostics: [{
+        source: 'foodland-express-proxy',
+        status: response.status,
+        reviews: reviews.length,
+        stale: payload.stale === true,
+        cache: payload.cache || null,
+        error: null
+      }]
+    };
+  } catch (error) {
+    console.warn('Foodland reviews proxy unavailable, trying Najnakup directly:', error.message);
+  }
+
   let cookie = '';
   const absorbCookies = response => {
     const values = typeof response.headers?.getSetCookie === 'function' ? response.headers.getSetCookie() : [];

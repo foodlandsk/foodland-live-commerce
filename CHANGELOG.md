@@ -96,3 +96,10 @@
 ## v1.1
 
 - Initial GitHub/Railway-ready package.
+# 1.5.3
+
+- Uses the verified `foodland-express.sk` PHP endpoint as the primary reviews data source.
+- Validates and sanitizes proxy JSON before storing reviews.
+- Keeps the direct Najnakup widget/profile fetch only as a fallback.
+- Existing CreativeSites modules and public API paths remain unchanged.
+- Schedules the daily update at 15:00 Europe/Bratislava throughout summer and winter time.

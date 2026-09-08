@@ -55,6 +55,27 @@ test('fetchNajnakupReviews rejects suspiciously small parser results', async () 
   await assert.rejects(fetchNajnakupReviews({ fetchImpl, pages: 1 }), /2 reviews/);
 });
 
+test('fetchNajnakupReviews accepts validated Foodland proxy JSON', async () => {
+  const items = Array.from({ length: 30 }, (_, index) => ({
+    source_key: `key-${index}`,
+    name: `Customer ${index}`,
+    date: '08.09.2026',
+    text: `Review ${index}`,
+    recommended: true,
+    customer_type: index === 0 ? 'regular' : 'verified'
+  }));
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ ok: true, count: 30, stale: false, cache: 'hit', items })
+  });
+  const result = await fetchNajnakupReviews({ fetchImpl });
+  assert.equal(result.source, 'foodland-express-proxy');
+  assert.equal(result.reviews.length, 30);
+  assert.equal(result.reviews[0].customer_type, 'regular');
+  assert.equal(result.diagnostics[0].cache, 'hit');
+});
+
 test('translations safely fall back to Slovak when no API key is configured', async () => {
   const [review] = parseNajnakupPage(page).reviews;
   const translations = await buildTranslations([review]);
