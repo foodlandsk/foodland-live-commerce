@@ -25,7 +25,7 @@ Legenda závažnosti: 🔴 kritická (funkčný dopad na produkciu) · 🟠 stre
 
 ---
 
-## 🔴 1. Neošetrené chyby v `/api/live/recent` a `/api/live/summary` môžu request "zaseknúť"
+## 🔴 1. Neošetrené chyby v `/api/live/recent` a `/api/live/summary` môžu request "zaseknúť" — ✅ opravené
 
 **Súbor:** `src/index.js:706-756`
 
@@ -38,25 +38,30 @@ chyba skončí ako unhandled rejection a klient nedostane žiadnu odpoveď (vis�
 Konkrétny reprodukovateľný prípad:
 
 ```js
-// src/index.js:707-708
+// src/index.js:707-708 (pred opravou)
 const limit = Math.min(30, Math.max(1, Number(req.query.limit || 10)));
 const hours = Math.min(168, Math.max(1, Number(req.query.hours || RECENT_MAX_AGE_HOURS)));
 ```
 
 `Number('abc')` je `NaN`; `Math.max(1, NaN)` aj `Math.min(30, NaN)` vrátia `NaN`. Request typu
 `GET /api/live/recent?limit=abc` alebo `?hours=xx` teda pošle `LIMIT NaN` / `'NaN hours'::interval`
-do Postgresu, dopyt zlyhá, chyba nie je zachytená a request visí bez odpovede. To isté platí pre
-`hours` v `/api/live/summary` cez `queryLimit`.
+do Postgresu, dopyt zlyhá, chyba nie je zachytená a request visí bez odpovede.
+`/api/live/summary` nepoužíva žiadne query parametre (teda voči NaN nie je zraniteľný), no
+rovnako chýbal `try/catch` okolo `pool.query`, takže akákoľvek DB chyba (výpadok spojenia a pod.)
+by sa správala rovnako — visiaci request bez odpovede.
 
 **Dopad:** ktorýkoľvek klient (aj neúmyselne, cez zle nakonfigurovaný CDN/cache kľúč alebo bota)
 môže spôsobiť visiace requesty na verejnom, neautentifikovanom endpointe.
 
-**Odporúčanie:** obaliť oba handlery do `try/catch` (rovnako ako `/api/reviews`) a validovať
-`Number.isFinite()` pred `Math.min/max`, nie až po.
+**Oprava:** obidva handlery sú teraz obalené v `try/catch` (rovnako ako `/api/reviews`, vracajú
+`500` s JSON chybou) a `limit`/`hours` sa validujú cez nový helper `clampInt()`
+(`src/index.js`), ktorý pri nečíselnom/nekonečnom vstupe použije bezpečný fallback namiesto
+propagovania `NaN`. Pridané testy: `clampInt falls back to a finite default instead of
+propagating NaN` (`test/index.test.js`).
 
 ---
 
-## 🔴 2. Neobmedzený "fan-out" externých HTTP requestov pri preklade produktov (non-SK jazyky)
+## 🔴 2. Neobmedzený "fan-out" externých HTTP requestov pri preklade produktov (non-SK jazyky) — ✅ opravené
 
 **Súbor:** `src/index.js:706-734` (najmä 710 a 726-730), v kontraste s `src/index.js:464-485`
 
@@ -93,13 +98,14 @@ zahraničných shopoch sa toto môže znásobiť naprieč mnohými súčasnými 
 **Dopad:** riziko pomalých odpovedí (blokuje sa na najpomalšom z 90 fetchov), zbytočné zaťaženie
 vlastnej infraštruktúry (jazykové Foodland weby) vlastným AI/social-proof widgetom.
 
-**Odporúčanie:** dávkovať `localizeLiveProduct` rovnako ako `repairAmbiguousProductImages`
-(napr. po 4-6), prípadne cachovať výsledok agresívnejšie a predpočítavať preklady on background
-namiesto request-time.
+**Oprava:** `/api/live/recent` teraz dávkuje `localizeLiveProduct` po 4 cez nový zdieľaný helper
+`mapWithConcurrency()`, ktorý používa aj `repairAmbiguousProductImages` (refaktorované na
+rovnakú utilitu, aby oba miesta zdieľali rovnaké obmedzenie súbežnosti). Test:
+`mapWithConcurrency preserves order and never runs more than batchSize mappers at once`.
 
 ---
 
-## 🔴 3. Chybný výpočet letného/zimného času v `parseOrderDate` — posun objednávky až o 1 hodinu
+## 🔴 3. Chybný výpočet letného/zimného času v `parseOrderDate` — posun objednávky až o 1 hodinu — ✅ opravené
 
 **Súbor:** `src/index.js:220-234`
 
@@ -126,14 +132,16 @@ priamo prejaví v social-proof texte "pred X min." / "pred X h" vo widgete — o
 minút sa môže zobraziť ako "pred 65 min." alebo naopak, počas presne tých dní v roku, kedy má
 byť "živosť" widgetu najpresvedčivejšia.
 
-**Odporúčanie:** namiesto ručnej heuristiky použiť `Intl.DateTimeFormat` s `timeZone:
-'Europe/Bratislava'` na zistenie skutočného offsetu pre daný dátum (rovnaký prístup, aký už kód
-používa v `millisecondsUntilReviewRefresh`, riadky 176-194) — eliminuje to celú triedu chýb bez
-potreby externej knižnice.
+**Oprava:** nová funkcia `zonedTimeToUtc()` (`src/index.js`) prevádza SK miestny čas na UTC cez
+dvojitú konverziu s `Intl.DateTimeFormat({ timeZone: 'Europe/Bratislava' })` — zistí skutočný
+offset pre daný okamih namiesto pevnej mesačnej heuristiky. `parseOrderDate` ju teraz volá priamo.
+Testy overujú presne oba prechody v roku 2026 (28./31. 3. a 24./30. 10.) aj kontrolné prípady
+mimo prechodu: `parseOrderDate applies the correct Europe/Bratislava DST offset at the CET/CEST
+boundary`.
 
 ---
 
-## 🔴 4. `maskOrderNumber` v skutočnosti nemaskuje čísla objednávok bežnej dĺžky
+## 🔴 4. `maskOrderNumber` v skutočnosti nemaskuje čísla objednávok bežnej dĺžky — ✅ opravené
 
 **Súbor:** `src/index.js:205-209`
 
@@ -162,8 +170,10 @@ vynechávajú) — ide teda o "mŕtvy, ale rozbitý" kus kódu v databáze, nie 
 však latentná chyba: v momente, keď niekto v budúcnosti pridá pole do API odpovede (napr. pre
 admin dashboard), sa maskovanie nebude správať tak, ako názov funkcie sľubuje.
 
-**Odporúčanie:** opraviť masku (napr. ponechať len prvé 2 a posledné 1 znaky, alebo hashovať) a
-pridať jednotkový test s reálnou dĺžkou (5–7 číslic), nie len hraničný prípad `≤4`.
+**Oprava:** `maskOrderNumber` teraz ponecháva len prvé 2 a posledné 1 znaky (`slice(0,2)` +
+`slice(-1)`), takže pre čísla dĺžky ≥5 (minimum, ktoré `parseOrderNumber` vôbec akceptuje) je
+vždy skrytá aspoň jedna číslica bez prekrytia hlavy/chvosta. Test: `maskOrderNumber always hides
+at least one digit for real order numbers` (dĺžky 5, 6, 7, 12 aj hraničný prípad `≤4`).
 
 ---
 
@@ -308,17 +318,21 @@ textového tickeru, nie obnovu dát kariet.
 
 ## Zhrnutie podľa priority
 
-| # | Nález | Závažnosť | Súbor |
-|---|-------|-----------|-------|
-| 1 | Neošetrené chyby → visiace requesty pri zlom `limit`/`hours` | 🔴 | `src/index.js:706-756` |
-| 2 | Neobmedzený paralelný fan-out pri lokalizácii produktov | 🔴 | `src/index.js:726-730` |
-| 3 | Chybný DST offset v `parseOrderDate` (koniec marca/októbra) | 🔴 | `src/index.js:220-234` |
-| 4 | `maskOrderNumber` nemaskuje 5–6-miestne čísla | 🔴 | `src/index.js:205-209` |
-| 5 | Neobmedzené cache, trvalé cachovanie zlyhaní | 🟠 | `src/index.js:354,409,440` |
-| 6 | Fallback hodina refreshu (15) nezodpovedá zámeru (21) | 🟠 | `src/index.js:22-25` |
-| 7 | Duplicitné/korelované scraping parsery NajNakup.sk | 🟠 | `proxy/*.php`, `src/reviews.js` |
-| 8 | `data-interval` na kartách je mŕtva konfigurácia | 🟡 | `modules/live-orders/*`, `src/index.js:1126` |
-| 9 | Timing-safe token compare, rate limiting, testy na reťazce | 🟡 | viaceré |
+| # | Nález | Závažnosť | Súbor | Stav |
+|---|-------|-----------|-------|------|
+| 1 | Neošetrené chyby → visiace requesty pri zlom `limit`/`hours` | 🔴 | `src/index.js:706-756` | ✅ opravené |
+| 2 | Neobmedzený paralelný fan-out pri lokalizácii produktov | 🔴 | `src/index.js:726-730` | ✅ opravené |
+| 3 | Chybný DST offset v `parseOrderDate` (koniec marca/októbra) | 🔴 | `src/index.js:220-234` | ✅ opravené |
+| 4 | `maskOrderNumber` nemaskuje 5–6-miestne čísla | 🔴 | `src/index.js:205-209` | ✅ opravené |
+| 5 | Neobmedzené cache, trvalé cachovanie zlyhaní | 🟠 | `src/index.js:354,409,440` | otvorené |
+| 6 | Fallback hodina refreshu (15) nezodpovedá zámeru (21) | 🟠 | `src/index.js:22-25` | otvorené |
+| 7 | Duplicitné/korelované scraping parsery NajNakup.sk | 🟠 | `proxy/*.php`, `src/reviews.js` | otvorené |
+| 8 | `data-interval` na kartách je mŕtva konfigurácia | 🟡 | `modules/live-orders/*`, `src/index.js:1126` | otvorené |
+| 9 | Timing-safe token compare, rate limiting, testy na reťazce | 🟡 | viaceré | otvorené |
+
+Nálezy 1–4 (kritické) sú opravené v tomto commite (`src/index.js`, `test/index.test.js`).
+Nálezy 5–9 (stredné/nízke) zostávajú otvorené — nešlo o funkčné/bezpečnostné riziko rovnakej
+naliehavosti a ich oprava je samostatná úloha.
 
 Žiadny z nálezov nespochybňuje základný dátový tok (IMAP → Postgres → API → widget); ide o
 okrajové prípady, ktoré sa prejavia pri chybnom vstupe, medzinárodnej prevádzke, prechode
