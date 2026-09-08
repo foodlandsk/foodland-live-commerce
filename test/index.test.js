@@ -152,6 +152,57 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.equal(VERSION, '1.6.0');
 });
 
+test('Infowidget dict translates every data-fl-live-copy key in every language', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise(resolve => server.once('listening', resolve));
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/widget.js`);
+  const body = await response.text();
+
+  // These four keys (used by the card/sidebar HTML modules via
+  // data-fl-live-copy="cardSubtitle" etc.) were previously missing from the
+  // dict, so `if (dict[key])` silently skipped them and the elements kept
+  // whatever placeholder text was hardcoded in the HTML (e.g. Slovak text
+  // showing on the German storefront). Assert each language's translation
+  // is present, not just Slovak's.
+  const expectedByLanguage = {
+    sk: ['Produkty, ktoré si zákazníci práve vybrali', 'Načítavam najnovšie objednávky…'],
+    cz: ['Produkty, které si zákazníci právě vybrali', 'Načítám nejnovější objednávky…'],
+    de: ['Produkte, die Kunden gerade ausgewählt haben', 'Neueste Bestellungen werden geladen…'],
+    en: ['Products customers have just selected', 'Loading latest orders…'],
+    pl: ['Produkty właśnie wybrane przez klientów', 'Ładowanie najnowszych zamówień…'],
+    hu: ['A vásárlók által most kiválasztott termékek', 'A legújabb rendelések betöltése…'],
+    vi: ['Những sản phẩm khách hàng vừa chọn', 'Đang tải đơn hàng mới nhất…']
+  };
+  for (const [language, phrases] of Object.entries(expectedByLanguage)) {
+    for (const phrase of phrases) {
+      assert.ok(body.includes(phrase), `expected ${language} translation "${phrase}" in widget.js`);
+    }
+  }
+});
+
+test('Infowidget replaces a stuck loading skeleton with a translated empty state', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise(resolve => server.once('listening', resolve));
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/widget.js`);
+  const body = await response.text();
+
+  // A card/ticker target used to keep its static "Loading…" placeholder
+  // forever whenever a successful fetch resolved with zero items (renderCards
+  // / renderMessage bailed out early on falsy content). Assert the module now
+  // renders a translated empty state instead, and only before real content
+  // has ever been shown (cardsRendered / messages.length guards).
+  assert.match(body, /cardsRendered/);
+  assert.match(body, /esc\(dict\.empty\)/);
+  assert.match(body, /if \(!messages\.length && !messageTimer && textTargets\.length\)/);
+  assert.match(body, /empty: 'Noch keine Bestellungen\.'/);
+});
+
 test('Review widget JavaScript is served independently from live orders', async (t) => {
   const server = app.listen(0);
   t.after(() => server.close());

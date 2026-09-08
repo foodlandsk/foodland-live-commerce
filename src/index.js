@@ -1040,13 +1040,13 @@ app.get('/widget.js', (_req, res) => {
   }[lang];
 
   Object.assign(dict, {
-    sk: { mobileTitle: 'Práve nakupujú', mobileSubtitle: 'Najnovšie objednané produkty', swipe: 'Potiahnite →', sidebarTitle: 'Najnovšie objednávky', showMore: 'Zobraziť viac objednávok', showLess: 'Zobraziť menej objednávok', region: 'Najnovšie objednané produkty' },
-    cz: { mobileTitle: 'Právě nakupují', mobileSubtitle: 'Nejnověji objednané produkty', swipe: 'Posuňte →', sidebarTitle: 'Nejnovější objednávky', showMore: 'Zobrazit více objednávek', showLess: 'Zobrazit méně objednávek', region: 'Nejnověji objednané produkty' },
-    de: { mobileTitle: 'Wird gerade gekauft', mobileSubtitle: 'Zuletzt bestellte Produkte', swipe: 'Wischen →', sidebarTitle: 'Neueste Bestellungen', showMore: 'Weitere Bestellungen anzeigen', showLess: 'Weniger Bestellungen anzeigen', region: 'Zuletzt bestellte Produkte' },
-    en: { mobileTitle: 'Shopping now', mobileSubtitle: 'Recently ordered products', swipe: 'Swipe →', sidebarTitle: 'Latest orders', showMore: 'Show more orders', showLess: 'Show fewer orders', region: 'Recently ordered products' },
-    pl: { mobileTitle: 'Właśnie kupują', mobileSubtitle: 'Ostatnio zamówione produkty', swipe: 'Przesuń →', sidebarTitle: 'Najnowsze zamówienia', showMore: 'Pokaż więcej zamówień', showLess: 'Pokaż mniej zamówień', region: 'Ostatnio zamówione produkty' },
-    hu: { mobileTitle: 'Most vásárolnak', mobileSubtitle: 'Legutóbb rendelt termékek', swipe: 'Húzza el →', sidebarTitle: 'Legújabb rendelések', showMore: 'További rendelések', showLess: 'Kevesebb rendelés', region: 'Legutóbb rendelt termékek' },
-    vi: { mobileTitle: 'Khách đang mua', mobileSubtitle: 'Sản phẩm vừa được đặt', swipe: 'Vuốt →', sidebarTitle: 'Đơn hàng mới nhất', showMore: 'Xem thêm đơn hàng', showLess: 'Thu gọn đơn hàng', region: 'Sản phẩm vừa được đặt' }
+    sk: { mobileTitle: 'Práve nakupujú', mobileSubtitle: 'Najnovšie objednané produkty', swipe: 'Potiahnite →', sidebarTitle: 'Najnovšie objednávky', cardSubtitle: 'Produkty, ktoré si zákazníci práve vybrali', nextProducts: 'Ďalšie produkty →', previousProducts: 'Predchádzajúce produkty', loadingOrders: 'Načítavam najnovšie objednávky…', showMore: 'Zobraziť viac objednávok', showLess: 'Zobraziť menej objednávok', region: 'Najnovšie objednané produkty', empty: 'Zatiaľ žiadne objednávky.' },
+    cz: { mobileTitle: 'Právě nakupují', mobileSubtitle: 'Nejnověji objednané produkty', swipe: 'Posuňte →', sidebarTitle: 'Nejnovější objednávky', cardSubtitle: 'Produkty, které si zákazníci právě vybrali', nextProducts: 'Další produkty →', previousProducts: 'Předchozí produkty', loadingOrders: 'Načítám nejnovější objednávky…', showMore: 'Zobrazit více objednávek', showLess: 'Zobrazit méně objednávek', region: 'Nejnověji objednané produkty', empty: 'Zatím žádné objednávky.' },
+    de: { mobileTitle: 'Wird gerade gekauft', mobileSubtitle: 'Zuletzt bestellte Produkte', swipe: 'Wischen →', sidebarTitle: 'Neueste Bestellungen', cardSubtitle: 'Produkte, die Kunden gerade ausgewählt haben', nextProducts: 'Weitere Produkte →', previousProducts: 'Vorherige Produkte', loadingOrders: 'Neueste Bestellungen werden geladen…', showMore: 'Weitere Bestellungen anzeigen', showLess: 'Weniger Bestellungen anzeigen', region: 'Zuletzt bestellte Produkte', empty: 'Noch keine Bestellungen.' },
+    en: { mobileTitle: 'Shopping now', mobileSubtitle: 'Recently ordered products', swipe: 'Swipe →', sidebarTitle: 'Latest orders', cardSubtitle: 'Products customers have just selected', nextProducts: 'More products →', previousProducts: 'Previous products', loadingOrders: 'Loading latest orders…', showMore: 'Show more orders', showLess: 'Show fewer orders', region: 'Recently ordered products', empty: 'No recent orders yet.' },
+    pl: { mobileTitle: 'Właśnie kupują', mobileSubtitle: 'Ostatnio zamówione produkty', swipe: 'Przesuń →', sidebarTitle: 'Najnowsze zamówienia', cardSubtitle: 'Produkty właśnie wybrane przez klientów', nextProducts: 'Kolejne produkty →', previousProducts: 'Poprzednie produkty', loadingOrders: 'Ładowanie najnowszych zamówień…', showMore: 'Pokaż więcej zamówień', showLess: 'Pokaż mniej zamówień', region: 'Ostatnio zamówione produkty', empty: 'Na razie brak zamówień.' },
+    hu: { mobileTitle: 'Most vásárolnak', mobileSubtitle: 'Legutóbb rendelt termékek', swipe: 'Húzza el →', sidebarTitle: 'Legújabb rendelések', cardSubtitle: 'A vásárlók által most kiválasztott termékek', nextProducts: 'További termékek →', previousProducts: 'Előző termékek', loadingOrders: 'A legújabb rendelések betöltése…', showMore: 'További rendelések', showLess: 'Kevesebb rendelés', region: 'Legutóbb rendelt termékek', empty: 'Egyelőre nincs rendelés.' },
+    vi: { mobileTitle: 'Khách đang mua', mobileSubtitle: 'Sản phẩm vừa được đặt', swipe: 'Vuốt →', sidebarTitle: 'Đơn hàng mới nhất', cardSubtitle: 'Những sản phẩm khách hàng vừa chọn', nextProducts: 'Sản phẩm tiếp theo →', previousProducts: 'Sản phẩm trước', loadingOrders: 'Đang tải đơn hàng mới nhất…', showMore: 'Xem thêm đơn hàng', showLess: 'Thu gọn đơn hàng', region: 'Sản phẩm vừa được đặt', empty: 'Chưa có đơn hàng nào.' }
   }[lang]);
 
   document.querySelectorAll('[data-fl-live-copy]').forEach(function (element) {
@@ -1102,6 +1102,7 @@ app.get('/widget.js', (_req, res) => {
   let messages = [];
   let messageIndex = 0;
   let messageTimer = null;
+  let cardsRendered = false;
 
   function setupCardControls(target) {
     const root = target.closest('.fl-live-prefooter');
@@ -1157,7 +1158,20 @@ app.get('/widget.js', (_req, res) => {
       );
     }).join('');
 
-    if (!cards) return;
+    if (!cards) {
+      // A successful fetch with zero items — swap the static loading
+      // skeleton for an explicit empty state instead of leaving "Loading…"
+      // on screen forever. Once real cards have been shown at least once,
+      // keep them instead of flashing "empty" over a transient blank poll.
+      if (!cardsRendered) {
+        cardTargets.forEach(function (target) {
+          target.innerHTML = '<span class="fl-live-cards__meta">' + esc(dict.empty) + '</span>';
+        });
+      }
+      return;
+    }
+
+    cardsRendered = true;
     cardTargets.forEach(function (target) {
       target.innerHTML = cards;
       setupCardControls(target);
@@ -1216,7 +1230,16 @@ app.get('/widget.js', (_req, res) => {
           });
         });
 
-      if (!nextMessages.length) return;
+      if (!nextMessages.length) {
+        // Same reasoning as renderCards(): a successful-but-empty fetch
+        // should replace the static "Loading…" ticker text, but only
+        // before we have ever shown a real message (avoid flashing
+        // "empty" over content that's already on screen).
+        if (!messages.length && !messageTimer && textTargets.length) {
+          textTargets.forEach(function (target) { target.textContent = dict.empty; });
+        }
+        return;
+      }
 
       messages = nextMessages;
       if (!messageTimer && textTargets.length) {
