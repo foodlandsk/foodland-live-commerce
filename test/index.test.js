@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import {
   app,
   clampInt,
+  createTtlCache,
   extractProducts,
   extractProductId,
   extractLocalizedProductPage,
   extractProductPageImage,
   mapWithConcurrency,
   maskOrderNumber,
+  millisecondsUntilReviewRefresh,
   parseOrderDate,
   VERSION
 } from '../src/index.js';
@@ -220,4 +222,44 @@ test('mapWithConcurrency preserves order and never runs more than batchSize mapp
   });
   assert.deepEqual(results, [20, 40, 60, 80, 100, 120, 140]);
   assert.ok(maxActive <= 3, `expected at most 3 concurrent calls, saw ${maxActive}`);
+});
+
+test('createTtlCache expires a failed (falsy) lookup quickly but keeps a successful one', async () => {
+  const cache = createTtlCache({ positiveTtlMs: 1000, negativeTtlMs: 20 });
+  cache.set('miss', null);
+  cache.set('hit', { ok: true });
+
+  assert.equal(cache.has('miss'), true);
+  assert.equal(cache.get('miss'), null);
+  assert.equal(cache.has('hit'), true);
+  assert.deepEqual(cache.get('hit'), { ok: true });
+
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  assert.equal(cache.has('miss'), false, 'a transient failure should not stay cached forever');
+  assert.equal(cache.get('miss'), undefined);
+  assert.equal(cache.has('hit'), true, 'a successful lookup should outlive the negative TTL');
+});
+
+test('createTtlCache.delete removes an entry before its TTL expires', () => {
+  const cache = createTtlCache({ positiveTtlMs: 60000, negativeTtlMs: 60000 });
+  cache.set('key', 'value');
+  assert.equal(cache.has('key'), true);
+  cache.delete('key');
+  assert.equal(cache.has('key'), false);
+  assert.equal(cache.get('key'), undefined);
+});
+
+test('review refresh hour falls back to the documented 21:00 default when unset', () => {
+  // .env.example / CHANGELOG.md (v1.6.0) document 21:00 Europe/Bratislava;
+  // this test runs without REVIEWS_REFRESH_HOUR_LOCAL set, so the module's
+  // fallback constant applies.
+  const delay = millisecondsUntilReviewRefresh();
+  const next = new Date(Date.now() + delay);
+  const hour = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Bratislava',
+    hour: '2-digit',
+    hourCycle: 'h23'
+  }).format(next));
+  assert.equal(hour, 21);
 });

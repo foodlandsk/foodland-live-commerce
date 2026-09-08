@@ -83,19 +83,36 @@ export function parseNajnakupPage(html = '') {
   return { stats: { recommendation_percent: overall, recommendation_90d_percent: last90, total_reviews: total }, reviews };
 }
 
+// NajNakup.sk serves this exact widget markup to both this JS fallback and
+// the PHP proxy's parseWidget() (proxy/foodland-najnakup-reviews.php), which
+// is tried FIRST and normally the only one that runs. A class-name change on
+// NajNakup's side breaks both parsers at once (this one then returns zero
+// reviews and fetchNajnakupReviews() falls through to the structurally
+// independent parseNajnakupPage() below) — if you update these selectors,
+// update the WIDGET_CLASS_* constants in the PHP file to match.
+export const WIDGET_SELECTORS = {
+  review: '.dis',
+  name: '.dis_logo',
+  dateTime: '.dis_dt',
+  recommendation: '.dis_plus',
+  positive: '.rating_vyh',
+  negative: '.rating_nev',
+  summary: '.rating_desc'
+};
+
 export function parseNajnakupWidgetPage(html = '') {
   const $ = cheerio.load(html);
   const reviews = [];
-  $('.dis').each((_, element) => {
+  $(WIDGET_SELECTORS.review).each((_, element) => {
     const block = $(element);
-    const name = clean(block.find('.dis_logo').first().clone().find('img,br').remove().end().text());
-    const dateTime = clean(block.find('.dis_dt').first().text());
+    const name = clean(block.find(WIDGET_SELECTORS.name).first().clone().find('img,br').remove().end().text());
+    const dateTime = clean(block.find(WIDGET_SELECTORS.dateTime).first().text());
     const date = dateTime.match(/\d{2}\.\d{2}\.\d{4}/)?.[0] || '';
-    const recommendation = clean(block.find('.dis_plus').first().text()).toLocaleUpperCase('sk');
+    const recommendation = clean(block.find(WIDGET_SELECTORS.recommendation).first().text()).toLocaleUpperCase('sk');
     const recommended = !recommendation.includes('NEODPORÚČAM');
-    const positive = clean(block.find('.rating_vyh').first().text());
-    const negative = clean(block.find('.rating_nev').first().text());
-    const summary = clean(block.find('.rating_desc').first().text());
+    const positive = clean(block.find(WIDGET_SELECTORS.positive).first().text());
+    const negative = clean(block.find(WIDGET_SELECTORS.negative).first().text());
+    const summary = clean(block.find(WIDGET_SELECTORS.summary).first().text());
     const text = uniqueText([positive, negative, summary]).join(' ');
     if (!name || !date || !text) return;
     reviews.push({

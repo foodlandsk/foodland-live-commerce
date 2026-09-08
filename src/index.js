@@ -19,10 +19,18 @@ const MAIL_FOLDER = process.env.MAIL_FOLDER || 'INBOX';
 const PROCESS_UNSEEN_ONLY = String(process.env.PROCESS_UNSEEN_ONLY || 'true').toLowerCase() === 'true';
 const RECENT_MAX_AGE_HOURS = Math.max(1, Number(process.env.RECENT_MAX_AGE_HOURS || 48));
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-const configuredReviewHour = Number(process.env.REVIEWS_REFRESH_HOUR_LOCAL);
-const REVIEWS_REFRESH_HOUR_LOCAL = Number.isInteger(configuredReviewHour) && configuredReviewHour >= 0 && configuredReviewHour <= 23
-  ? configuredReviewHour
-  : 15;
+// Keep this fallback in sync with .env.example's REVIEWS_REFRESH_HOUR_LOCAL
+// (21:00 Europe/Bratislava, see CHANGELOG.md v1.6.0) so a missing/invalid
+// Railway variable degrades to the documented production schedule instead
+// of silently reverting to an old default.
+const REVIEWS_REFRESH_HOUR_LOCAL_DEFAULT = 21;
+const rawReviewHour = process.env.REVIEWS_REFRESH_HOUR_LOCAL;
+const configuredReviewHour = Number(rawReviewHour);
+const reviewHourIsValid = Number.isInteger(configuredReviewHour) && configuredReviewHour >= 0 && configuredReviewHour <= 23;
+if (rawReviewHour !== undefined && rawReviewHour !== '' && !reviewHourIsValid) {
+  console.warn(`Invalid REVIEWS_REFRESH_HOUR_LOCAL="${rawReviewHour}", falling back to ${REVIEWS_REFRESH_HOUR_LOCAL_DEFAULT}:00 Europe/Bratislava`);
+}
+const REVIEWS_REFRESH_HOUR_LOCAL = reviewHourIsValid ? configuredReviewHour : REVIEWS_REFRESH_HOUR_LOCAL_DEFAULT;
 const REVIEWS_TIME_ZONE = process.env.REVIEWS_TIME_ZONE || 'Europe/Bratislava';
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || [
@@ -374,7 +382,46 @@ function extractProductPageImage(html = '', productUrl = '') {
   }
 }
 
-const productImageCache = new Map();
+// A drop-in Map replacement (same get/has/set/delete surface) whose entries
+// expire lazily on access. Successful lookups (a resolved image/localization)
+// are kept for a full day; failed lookups (null, e.g. a transient network
+// error) are kept only briefly so a single bad fetch can't permanently
+// blacklist a product until the process restarts, and total memory use stays
+// bounded to recently-seen products instead of every product ever seen.
+function createTtlCache({ positiveTtlMs, negativeTtlMs }) {
+  const store = new Map();
+  function isExpired(entry) {
+    return Date.now() > entry.expiresAt;
+  }
+  return {
+    has(key) {
+      const entry = store.get(key);
+      if (!entry) return false;
+      if (isExpired(entry)) { store.delete(key); return false; }
+      return true;
+    },
+    get(key) {
+      const entry = store.get(key);
+      if (!entry || isExpired(entry)) return undefined;
+      return entry.value;
+    },
+    set(key, value) {
+      const ttlMs = value ? positiveTtlMs : negativeTtlMs;
+      store.set(key, { value, expiresAt: Date.now() + ttlMs });
+    },
+    delete(key) {
+      store.delete(key);
+    }
+  };
+}
+
+const PRODUCT_LOOKUP_POSITIVE_TTL_MS = 24 * 60 * 60 * 1000;
+const PRODUCT_LOOKUP_NEGATIVE_TTL_MS = 10 * 60 * 1000;
+
+const productImageCache = createTtlCache({
+  positiveTtlMs: PRODUCT_LOOKUP_POSITIVE_TTL_MS,
+  negativeTtlMs: PRODUCT_LOOKUP_NEGATIVE_TTL_MS
+});
 
 const LIVE_LANG_HOSTS = Object.freeze({
   sk: 'www.foodland.sk',
@@ -429,7 +476,10 @@ function extractLocalizedProductPage(html = '', pageUrl = '') {
   return { product_name: title, product_url: pageUrl, image_url: imageUrl };
 }
 
-const localizedProductCache = new Map();
+const localizedProductCache = createTtlCache({
+  positiveTtlMs: PRODUCT_LOOKUP_POSITIVE_TTL_MS,
+  negativeTtlMs: PRODUCT_LOOKUP_NEGATIVE_TTL_MS
+});
 
 async function localizeLiveProduct(product, language) {
   const lang = normalizeLiveLanguage(language);
@@ -1303,6 +1353,7 @@ if (isDirectRun) {
 export {
   app,
   clampInt,
+  createTtlCache,
   extractProducts,
   extractProductId,
   extractLocalizedProductPage,

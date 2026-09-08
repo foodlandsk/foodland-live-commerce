@@ -11,6 +11,19 @@ const SOURCE_URL = 'https://www.najnakup.sk/dz_shop_opinions.aspx?w=8237';
 const CACHE_TTL_SECONDS = 72000; // 20 hours
 const MAX_REVIEWS = 30;
 
+// NajNakup.sk serves this exact widget markup to both parseWidget() below and
+// the JS fallback src/reviews.js's parseNajnakupWidgetPage()/WIDGET_SELECTORS
+// (only reached if this proxy is unreachable). A class-name change on
+// NajNakup's side breaks both parsers at once — if you update these, update
+// WIDGET_SELECTORS in src/reviews.js to match.
+const WIDGET_CLASS_REVIEW = 'dis';
+const WIDGET_CLASS_NAME = 'dis_logo';
+const WIDGET_CLASS_DATETIME = 'dis_dt';
+const WIDGET_CLASS_RECOMMENDATION = 'dis_plus';
+const WIDGET_CLASS_POSITIVE = 'rating_vyh';
+const WIDGET_CLASS_NEGATIVE = 'rating_nev';
+const WIDGET_CLASS_SUMMARY = 'rating_desc';
+
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: public, max-age=300, stale-if-error=86400');
 header('X-Content-Type-Options: nosniff');
@@ -80,21 +93,21 @@ function parseWidget(string $html): array
     }
 
     $xpath = new DOMXPath($document);
-    $blocks = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " dis ")]');
+    $blocks = $xpath->query(classQuery(WIDGET_CLASS_REVIEW));
     if ($blocks === false) {
         return [];
     }
 
     $reviews = [];
     foreach ($blocks as $block) {
-        $name = firstText($xpath, $block, 'dis_logo');
-        $dateTime = firstText($xpath, $block, 'dis_dt');
+        $name = firstText($xpath, $block, WIDGET_CLASS_NAME);
+        $dateTime = firstText($xpath, $block, WIDGET_CLASS_DATETIME);
         preg_match('/\d{2}\.\d{2}\.\d{4}/', $dateTime, $dateMatch);
         $date = $dateMatch[0] ?? '';
-        $recommendation = firstText($xpath, $block, 'dis_plus');
-        $positive = firstText($xpath, $block, 'rating_vyh');
-        $negative = firstText($xpath, $block, 'rating_nev');
-        $summary = firstText($xpath, $block, 'rating_desc');
+        $recommendation = firstText($xpath, $block, WIDGET_CLASS_RECOMMENDATION);
+        $positive = firstText($xpath, $block, WIDGET_CLASS_POSITIVE);
+        $negative = firstText($xpath, $block, WIDGET_CLASS_NEGATIVE);
+        $summary = firstText($xpath, $block, WIDGET_CLASS_SUMMARY);
         $text = implode(' ', uniqueParts([$positive, $negative, $summary]));
 
         if ($name === '' || $date === '' || $text === '') {
