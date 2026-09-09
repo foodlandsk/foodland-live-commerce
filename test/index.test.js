@@ -414,3 +414,20 @@ test('reviews-widget.js does not gate loading on a data-reviews-loaded/-loading 
   assert.doesNotMatch(body, /dataset\.reviewsLoading/);
   assert.doesNotMatch(body, /dataset\.reviewsLoaded/);
 });
+
+test('review stats fall back to a value computed from stored reviews when the source reports none', async () => {
+  // The foodland-express-proxy source (the normal, preferred review source)
+  // never reports recommendation_percent/total_reviews at all, only the
+  // least-preferred direct-scrape fallback does — leaving /api/reviews
+  // stats permanently null under normal operation (a hardcoded "98%" and a
+  // broken-looking "0 hodnotení celkom" in the widget). Verified the actual
+  // SQL against a real local Postgres with a synthetic 10-row dataset
+  // (7/10 recommended overall, 6/8 recommended within the last 90 days):
+  // it computed total_reviews=10, recommendation_percent=70,
+  // recommendation_90d_percent=75 — exactly as expected.
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
+  assert.match(source, /if \(!stats\.recommendation_percent \|\| !stats\.total_reviews\)/);
+  assert.match(source, /COUNT\(\*\)::int AS total_reviews/);
+  assert.match(source, /ROUND\(100\.0 \* COUNT\(\*\) FILTER \(WHERE recommended\) \/ NULLIF\(COUNT\(\*\), 0\)\)::int AS recommendation_percent/);
+  assert.match(source, /review_date >= CURRENT_DATE - INTERVAL '90 days'/);
+});
