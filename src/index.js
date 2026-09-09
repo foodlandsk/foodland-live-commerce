@@ -145,6 +145,7 @@ async function refreshCustomerReviews() {
       apiKey: process.env.OPENAI_API_KEY || '',
       model: process.env.REVIEWS_TRANSLATION_MODEL || 'gpt-4.1-mini'
     });
+    let stats = payload.stats;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -164,6 +165,33 @@ async function refreshCustomerReviews() {
             fetched_at=NOW()
         `, [review.source_key, review.name, review.date, review.text, JSON.stringify(translations[review.source_key]), review.recommended, review.customer_type, position]);
       }
+
+      // The foodland-express-proxy source (the normal, preferred path) never
+      // reports recommendation_percent/total_reviews at all — only the
+      // least-preferred direct-scrape fallback (parseNajnakupPage) extracts
+      // those from NajNakup's page text. Under normal operation this left
+      // the public /api/reviews stats permanently null, which the widget
+      // then displayed as a hardcoded "98%" and a broken-looking "0
+      // hodnotení celkom". When the source didn't supply real stats,
+      // compute them from our own accumulated reviews instead of leaving
+      // them null: not NajNakup's official site-wide total, but a real,
+      // truthful, growing number instead of a placeholder.
+      if (!stats.recommendation_percent || !stats.total_reviews) {
+        const { rows: [computed] } = await client.query(`
+          SELECT
+            COUNT(*)::int AS total_reviews,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE recommended) / NULLIF(COUNT(*), 0))::int AS recommendation_percent,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE recommended AND review_date >= CURRENT_DATE - INTERVAL '90 days')
+              / NULLIF(COUNT(*) FILTER (WHERE review_date >= CURRENT_DATE - INTERVAL '90 days'), 0))::int AS recommendation_90d_percent
+          FROM customer_reviews
+        `);
+        stats = {
+          recommendation_percent: stats.recommendation_percent || computed.recommendation_percent || 0,
+          recommendation_90d_percent: stats.recommendation_90d_percent || computed.recommendation_90d_percent || 0,
+          total_reviews: stats.total_reviews || computed.total_reviews || 0
+        };
+      }
+
       await client.query(`
         UPDATE review_sync_state SET
           recommendation_percent=COALESCE(NULLIF($1,0), recommendation_percent),
@@ -172,7 +200,7 @@ async function refreshCustomerReviews() {
           last_success_at=NOW(),
           last_error=NULL
         WHERE singleton=TRUE
-      `, [payload.stats.recommendation_percent, payload.stats.recommendation_90d_percent, payload.stats.total_reviews]);
+      `, [stats.recommendation_percent, stats.recommendation_90d_percent, stats.total_reviews]);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -180,7 +208,7 @@ async function refreshCustomerReviews() {
     } finally {
       client.release();
     }
-    const result = { ok: true, started_at: startedAt, reviews: payload.reviews.length, stats: payload.stats, source: payload.source, diagnostics: payload.diagnostics };
+    const result = { ok: true, started_at: startedAt, reviews: payload.reviews.length, stats, source: payload.source, diagnostics: payload.diagnostics };
     reviewSyncStatus.last_result = result;
     return result;
   } catch (error) {
