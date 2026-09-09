@@ -887,7 +887,7 @@ app.get('/api/reviews', async (req, res) => {
         SELECT customer_name, TO_CHAR(review_date, 'DD.MM.YYYY') AS review_date,
                original_text, translations, recommended, customer_type
         FROM customer_reviews
-        ORDER BY review_date DESC, source_position ASC NULLS LAST, fetched_at DESC
+        ORDER BY customer_reviews.review_date DESC, customer_reviews.source_position ASC NULLS LAST, customer_reviews.fetched_at DESC
         LIMIT $1
       `, [limit]),
       pool.query(`
