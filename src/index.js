@@ -1299,15 +1299,25 @@ app.get('/reviews-widget.js', (_req, res) => {
     vi:{title:'{p}% khách hàng giới thiệu FOODLAND',updated:'{n} đánh giá mới nhất từ NajNakup.sk • tổng cộng {t} đánh giá • Cập nhật: {d}',yes:'Giới thiệu cửa hàng',no:'Không giới thiệu cửa hàng'}
   };
   function fill(text, values) { return text.replace(/\{(\w+)\}/g, function (_, key) { return values[key]; }); }
+  // Tracks which root elements have already started/finished loading, in
+  // JS memory only. This must NOT be a DOM attribute (like the old
+  // data-reviews-loaded/-loading pair): CreativeSites can snapshot a page's
+  // DOM back into static HTML after client-side JS has run once, which
+  // freezes data-reviews-loaded="true" into the markup served on every
+  // future page load — a fresh page load then sees that attribute already
+  // "true", so start() returns immediately without ever fetching, and the
+  // static fallback content in the page is never replaced. A WeakSet can't
+  // be serialized into HTML, so it can't be poisoned by such a snapshot.
+  var startedReviewRoots = new WeakSet();
   function start(root) {
-    if (root.dataset.reviewsLoading === 'true' || root.dataset.reviewsLoaded === 'true') return;
-    root.dataset.reviewsLoading = 'true';
+    if (startedReviewRoots.has(root)) return;
+    startedReviewRoots.add(root);
     var lang = (root.dataset.lang || document.documentElement.lang || 'sk').toLowerCase();
     lang = lang.indexOf('cs') === 0 ? 'cz' : lang.slice(0,2);
     if (!copies[lang]) lang = 'sk';
     var c = copies[lang], track = root.querySelector('.foodland-review-track'), dots = root.querySelector('.foodland-review-dots');
     var title = root.querySelector('.foodland-review-title span'), updated = root.querySelector('.foodland-review-updated');
-    if (!api || !track || !dots) return;
+    if (!api || !track || !dots) { startedReviewRoots.delete(root); return; }
     fetch(api + '/api/reviews?lang=' + encodeURIComponent(lang) + '&limit=30', { cache:'no-store' })
       .then(function (response) { if (!response.ok) throw new Error('HTTP ' + response.status); return response.json(); })
       .then(function (data) {
@@ -1335,8 +1345,11 @@ app.get('/reviews-widget.js', (_req, res) => {
         window.addEventListener('resize', onResize);
         var values={p:data.recommendation_percent||98,n:items.length,t:Number(data.total_reviews||0).toLocaleString(lang==='cz'?'cs-CZ':lang),d:data.updated_at?new Date(data.updated_at).toLocaleDateString(lang==='cz'?'cs-CZ':lang):''};
         if(title) title.textContent='⭐ NajNakup.sk • '+fill(c.title,values); if(updated) updated.textContent=fill(c.updated,values);
-        render(); root.dataset.reviewsLoaded='true'; root.dataset.reviewsLoading='false';
-      }).catch(function (error) { root.dataset.reviewsLoading='false'; console.warn('Foodland reviews: using embedded fallback', error); });
+        render();
+      }).catch(function (error) {
+        startedReviewRoots.delete(root);
+        console.warn('Foodland reviews: using embedded fallback', error);
+      });
   }
   function init() { document.querySelectorAll('[data-foodland-reviews]').forEach(start); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();

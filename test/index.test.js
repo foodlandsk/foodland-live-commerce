@@ -391,3 +391,26 @@ test('/api/reviews sorts by the real review_date column, not by its DD.MM.YYYY d
     '08.09.2026', '07.09.2026', '01.09.2026', '31.08.2026', '30.08.2026', '29.08.2026', '24.08.2026'
   ]);
 });
+
+test('reviews-widget.js does not gate loading on a data-reviews-loaded/-loading DOM attribute', async (t) => {
+  // Production incident: CreativeSites had snapshotted a page's DOM back
+  // into static HTML after client-side JS once ran successfully, freezing
+  // data-reviews-loaded="true" into the served markup. Every fresh page
+  // load then saw that attribute already "true" and start() returned
+  // immediately without ever fetching, permanently showing the page's
+  // static fallback review cards instead of live data. The fix tracks
+  // per-root load state in a WeakSet (JS memory only, can't be serialized
+  // into HTML) instead of dataset attributes.
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise(resolve => server.once('listening', resolve));
+  const { port } = server.address();
+
+  const response = await fetch(`http://127.0.0.1:${port}/reviews-widget.js`);
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(body, /new WeakSet\(\)/);
+  assert.match(body, /startedReviewRoots\.has\(root\)/);
+  assert.doesNotMatch(body, /dataset\.reviewsLoading/);
+  assert.doesNotMatch(body, /dataset\.reviewsLoaded/);
+});
