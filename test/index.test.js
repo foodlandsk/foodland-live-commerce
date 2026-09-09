@@ -116,7 +116,7 @@ test('reviews preserve source order inside the same date', async () => {
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
   assert.match(source, /ADD COLUMN IF NOT EXISTS source_position INTEGER/);
   assert.match(source, /for \(const \[position, review\] of payload\.reviews\.entries\(\)\)/);
-  assert.match(source, /ORDER BY review_date DESC, source_position ASC NULLS LAST, fetched_at DESC/);
+  assert.match(source, /ORDER BY customer_reviews\.review_date DESC, customer_reviews\.source_position ASC NULLS LAST, customer_reviews\.fetched_at DESC/);
 });
 
 test('Infowidget JavaScript is served and contains the multilingual client', async (t) => {
@@ -352,4 +352,42 @@ test('a disallowed CORS origin is rejected and logged for diagnosis', async (t) 
     warnings.some(w => w.includes('CORS rejected origin "https://evil.example"')),
     'expected a CORS rejection warning naming the origin, so a misconfiguration like this is diagnosable from server logs alone'
   );
+});
+
+test('/api/reviews sorts by the real review_date column, not by its DD.MM.YYYY display text', async () => {
+  // Production incident: reviews came back sorted by day-of-month only
+  // (e.g. 31.08, 30.08 x3, ... 24.08, then jumping back to 08.09, 07.09,
+  // ...), completely ignoring month and year.
+  //
+  // Root cause: `SELECT ... TO_CHAR(review_date, 'DD.MM.YYYY') AS review_date
+  // ... ORDER BY review_date DESC` — PostgreSQL resolves a bare ORDER BY
+  // identifier to a matching SELECT-list alias *before* an input-table
+  // column of the same name (documented behavior, the opposite of what
+  // GROUP BY does). So `review_date` in ORDER BY bound to the TO_CHAR(...)
+  // text alias, not the underlying DATE column, and sorted that text
+  // lexicographically — which sorts by day-of-month first and ignores
+  // month/year entirely, exactly reproducing the observed order.
+  //
+  // Fix: qualify the ORDER BY columns with the table name so they can only
+  // resolve to the real input columns.
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
+  assert.match(
+    source,
+    /ORDER BY customer_reviews\.review_date DESC, customer_reviews\.source_position ASC NULLS LAST, customer_reviews\.fetched_at DESC/
+  );
+
+  // Directly demonstrate the bug this guards against: sorting the DD.MM.YYYY
+  // display text (as the unqualified ORDER BY used to, in effect) produces a
+  // materially different, wrong order versus sorting by the real date.
+  const displayDates = [
+    '31.08.2026', '30.08.2026', '29.08.2026', '24.08.2026',
+    '08.09.2026', '07.09.2026', '01.09.2026'
+  ];
+  const sortedAsText = [...displayDates].sort((a, b) => b.localeCompare(a));
+  const toDate = s => { const [d, m, y] = s.split('.'); return new Date(Number(y), Number(m) - 1, Number(d)); };
+  const sortedByRealDate = [...displayDates].sort((a, b) => toDate(b) - toDate(a));
+  assert.notDeepEqual(sortedAsText, sortedByRealDate, 'the two sort strategies must disagree for this fixture, or the regression would not be caught');
+  assert.deepEqual(sortedByRealDate, [
+    '08.09.2026', '07.09.2026', '01.09.2026', '31.08.2026', '30.08.2026', '29.08.2026', '24.08.2026'
+  ]);
 });
