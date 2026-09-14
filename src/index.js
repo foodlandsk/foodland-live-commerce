@@ -1327,6 +1327,22 @@ app.get('/reviews-widget.js', (_req, res) => {
     vi:{title:'{p}% khách hàng giới thiệu FOODLAND',updated:'{n} đánh giá mới nhất từ NajNakup.sk • tổng cộng {t} đánh giá • Cập nhật: {d}',yes:'Giới thiệu cửa hàng',no:'Không giới thiệu cửa hàng'}
   };
   function fill(text, values) { return text.replace(/\{(\w+)\}/g, function (_, key) { return values[key]; }); }
+  function setBrandedText(element, text) {
+    if (!element) return;
+    element.textContent = '';
+    String(text).split(/(FOODLAND)/g).forEach(function (part) {
+      if (part === 'FOODLAND') {
+        var brand = document.createElement('span');
+        brand.textContent = 'Foodland';
+        brand.setAttribute('translate', 'no');
+        brand.setAttribute('lang', 'en');
+        brand.className = 'notranslate';
+        element.appendChild(brand);
+      } else if (part) {
+        element.appendChild(document.createTextNode(part));
+      }
+    });
+  }
   // Tracks which root elements have already started/finished loading, in
   // JS memory only. This must NOT be a DOM attribute (like the old
   // data-reviews-loaded/-loading pair): CreativeSites can snapshot a page's
@@ -1372,7 +1388,7 @@ app.get('/reviews-widget.js', (_req, res) => {
         var onResize = function () { var next=window.innerWidth<=768?1:3; if(next!==perPage){perPage=next;page=0;render();} };
         window.addEventListener('resize', onResize);
         var values={p:data.recommendation_percent||98,n:items.length,t:Number(data.total_reviews||0).toLocaleString(lang==='cz'?'cs-CZ':lang),d:data.updated_at?new Date(data.updated_at).toLocaleDateString(lang==='cz'?'cs-CZ':lang):''};
-        if(title) title.textContent='⭐ NajNakup.sk • '+fill(c.title,values); if(updated) updated.textContent=fill(c.updated,values);
+        if(title) setBrandedText(title, '⭐ NajNakup.sk • '+fill(c.title,values)); if(updated) updated.textContent=fill(c.updated,values);
         render();
       }).catch(function (error) {
         startedReviewRoots.delete(root);
