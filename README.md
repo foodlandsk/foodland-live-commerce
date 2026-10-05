@@ -82,7 +82,7 @@ Premenné sú v `.env.capi.example`; token patrí iba do zabezpečených Railway
 
 Parser vyžaduje explicitnú konečnú sumu s menou EUR, zákaznícky e-mail a všetky položky s FL_* ID, množstvom a jednotkovou cenou.
 Jednotkovú cenu číta z `data-unit-price`, označenia Cena za kus/Jednotková cena/Cena/ks alebo rovnomenného záhlavia tabuľky.
-Neoznačené stĺpce neodhaduje. Pred zapnutím treba overiť skutočný CreativeSites objednávkový e-mail; automatické testy používajú reprezentatívnu vzorku.
+Overený CreativeSites e-mail má vnorený opis produktu, samostatný stĺpec objednaného množstva a cenu riadka; jednotková cena sa vypočíta z ceny riadka / množstva. Číslo obrázka nie je produktové ID. Ak e-mail neobsahuje explicitné ID, worker načíta presný `gtag view_item` z HTTPS produktovej stránky foodland.sk. Pri chýbajúcom alebo nejednoznačnom ID sa udalosť neodošle a neprečítaný e-mail zostane na opakovanie. Test používa anonymizovanú vzorku skutočného rozloženia.
 
 Postup: nasadiť vypnutý worker, vložiť token, nastaviť test_event_code a čas aktivácie,
 overiť čerstvú testovaciu objednávku a prijatie v Meta Test events, potom odstrániť test_event_code.

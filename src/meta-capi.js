@@ -3,6 +3,14 @@ import * as cheerio from 'cheerio';
 
 export const DATASET_ID = '698074744109995';
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+const textOf = ($, node) => $(node).text().replace(/\s+/g, ' ').trim();
+export function purchaseProductRow($, anchor) {
+  const rows = $(anchor).parents('tr').toArray();
+  return $(rows.find(row => {
+    const cells = $(row).children('td,th');
+    return cells.length === 3 && /^\d+\s*ks$/i.test(textOf($, cells.eq(1))) && money(textOf($, cells.eq(2))) !== null;
+  }) || rows[0]);
+}
 export function money(value) {
   const raw = String(value ?? '').trim();
   if (!/^\d[\d\s\u00a0]*(?:[.,]\d{1,2})?\s*(?:EUR|€)?$/i.test(raw)) return null;
@@ -14,7 +22,7 @@ export function money(value) {
 // Only use explicit customer fields; never hash the shop sender or a footer address.
 export function parsePurchaseMail({ html = '', plain = '', orderNumber, orderedAt, products = [] }) {
   const $ = cheerio.load(html);
-  const body = plain || $('body').text();
+  const body = (plain || $('body').text()).replace(/\s+/g, ' ');
   const totals = [];
   $('tr').each((_, row) => {
     const cells = $(row).children('td,th').map((_, cell) => $(cell).text().trim()).get();
@@ -28,24 +36,59 @@ export function parsePurchaseMail({ html = '', plain = '', orderNumber, orderedA
     if (total !== null) totals.push(total);
   }
   const uniqueTotals = [...new Set(totals)];
-  const email = body.match(/(?:e-?mail zákazníka|zákaznícky e-?mail|e-?mail)\s*:\s*([^\s<>]+@[^\s<>]+)/i)?.[1]?.trim().toLowerCase();
+  const addressRows = $('tr').filter((_, row) => /^Adresa na doručenie\s*:$/i.test(textOf($, $(row).children('td,th').first())));
+  const customerEmails = addressRows.find('a[href^="mailto:"]').map((_, a) => $(a).attr('href').slice(7).split('?')[0].trim().toLowerCase()).get();
+  const email = [...new Set(customerEmails)].length === 1 ? customerEmails[0] : body.match(/(?:e-?mail zákazníka|zákaznícky e-?mail|e-?mail)\s*:\s*([^\s<>]+@[^\s<>]+)/i)?.[1]?.trim().toLowerCase();
   const user_data = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? { em: [hash(email)] } : {};
   const contents = products.map(product => {
     const anchors = $('a[href]').filter((_, a) => $(a).attr('href') === product.product_url);
-    const row = anchors.first().closest('tr');
+    const row = purchaseProductRow($, anchors.filter((_, a) => $(a).text().trim()).first());
     const explicit = row.attr('data-product-id') || row.text().match(/\bFL_\d+\b/)?.[0];
     let numeric;
     try { numeric = new URL(product.product_url).searchParams.get('product_id'); } catch {}
-    numeric ||= product.image_url?.match(/-(\d+)\.(?:jpg|png|webp)(?:\?|$)/i)?.[1];
     const id = /^FL_\d+$/.test(explicit || '') ? explicit : /^\d+$/.test(explicit || numeric || '') ? `FL_${explicit || numeric}` : null;
     // Do not guess whether an unlabelled last column means unit price or row total.
     const headers = row.closest('table').find('tr').filter((_, tr) => $(tr).find('th').length > 0).first().children('th,td').map((_, cell) => $(cell).text().trim()).get();
     const unitColumn = headers.findIndex(text => /^(?:cena za kus|jednotková cena|cena\/ks)(?:\s*\(.*\))?$/i.test(text));
     const priceText = row.attr('data-unit-price') || row.text().match(/(?:cena za kus|jednotková cena|cena\/ks)\s*:?\s*(\d[\d\s.,]*)\s*(?:EUR|€)/i)?.[1] || (unitColumn >= 0 ? row.children('td,th').eq(unitColumn).text() : null);
-    const item_price = money(priceText);
-    return { id, quantity: product.quantity, item_price };
+    const cells = row.children('td,th');
+    const quantityText = textOf($, cells.eq(1));
+    const legacyRow = cells.length === 3 && /^\d+\s*ks$/i.test(quantityText) && /Balenie\s*:/i.test(textOf($, cells.first()));
+    const quantity = legacyRow ? Number(quantityText.match(/^\d+/)[0]) : product.quantity;
+    const lineTotal = legacyRow ? money(textOf($, cells.eq(2))) : null;
+    const item_price = money(priceText) ?? (lineTotal !== null && quantity > 0 ? Number((lineTotal / quantity).toFixed(6)) : null);
+    return { id, quantity, item_price, ...(!id ? { product_url: product.product_url } : {}) };
   });
   return { transaction_id: String(orderNumber || ''), orderedAt, value: uniqueTotals.length === 1 ? uniqueTotals[0] : null, currency: 'EUR', contents, user_data };
+}
+
+// Image file IDs differ from ecommerce item_id. Read only the product's exact
+// view_item payload, never recommendation lists or executable JavaScript.
+export function productIdFromHtml(html) {
+  const ids = [];
+  for (const match of String(html).matchAll(/gtag\(\s*["']event["']\s*,\s*["']view_item["']\s*,\s*(\{[\s\S]*?\})\s*\);/g)) {
+    try {
+      const items = JSON.parse(match[1]).items;
+      if (items?.length === 1 && /^FL_\d+$/.test(items[0].item_id)) ids.push(items[0].item_id);
+    } catch {}
+  }
+  return new Set(ids).size === 1 ? ids[0] : null;
+}
+export async function resolvePurchaseIds(purchase, fetchImpl = fetch) {
+  const contents = [];
+  for (const item of purchase.contents) {
+    let id = item.id;
+    if (!id) {
+      const url = new URL(item.product_url);
+      if (url.protocol !== 'https:' || !['foodland.sk', 'www.foodland.sk'].includes(url.hostname) || url.port || url.username || url.password) throw new Error('invalid-product-url');
+      const response = await fetchImpl(url.href, { redirect: 'error', signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('product-id-unavailable');
+      id = productIdFromHtml(await response.text());
+      if (!id) throw new Error('product-id-unavailable');
+    }
+    contents.push({ id, quantity: item.quantity, item_price: item.item_price });
+  }
+  return { ...purchase, contents };
 }
 
 export function buildPurchase(purchase, now = Date.now()) {

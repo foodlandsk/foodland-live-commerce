@@ -8,7 +8,7 @@ import * as cheerio from 'cheerio';
 import pg from 'pg';
 import { pathToFileURL } from 'url';
 import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAGES } from './reviews.js';
-import { initCapi, parsePurchaseMail, enqueuePurchase, drainCapi, DATASET_ID } from './meta-capi.js';
+import { initCapi, parsePurchaseMail, resolvePurchaseIds, purchaseProductRow, enqueuePurchase, drainCapi, DATASET_ID } from './meta-capi.js';
 
 const { Pool } = pg;
 
@@ -297,7 +297,7 @@ function zonedTimeToUtc(year, month, day, hour, minute, second, timeZone) {
 }
 
 function parseOrderDate(subject = '', text = '', mailDate = null) {
-  const source = `${subject}\n${text}`;
+  const source = `${subject}\n${text}`.replace(/\s+/g, ' ');
   const m = source.match(/Dátum a čas prijatia:\s*([0-3]?\d)\.\s*([01]?\d)\.\s*(20\d{2})\s+([0-2]?\d):([0-5]\d):([0-5]\d)/i);
   if (m) {
     const [, dd, mm, yyyy, hh, min, sec] = m;
@@ -625,7 +625,9 @@ function extractProducts(html = '') {
     const productUrl = normalizeFoodlandUrl(href);
     if (!productUrl || seen.has(productUrl)) return;
 
-    const context = nearestContextText($, a);
+    const purchaseRow = purchaseProductRow($, a);
+    const rowText = purchaseRow.children('td,th').map((_, cell) => $(cell).text().replace(/\s+/g, ' ').trim()).get().join(' ');
+    const context = /\d+\s*ks\b/i.test(rowText) ? rowText : nearestContextText($, a);
     // A product row in Foodland order mail should be near quantity/packing context.
     if (!/Balenie:|(?:^|\s)\d+\s*ks(?:\s|$)/i.test(context)) return;
 
@@ -758,7 +760,13 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
             // Store parsed data in memory and close IMAP before making product
             // page HTTP requests. This prevents the mailbox socket from idling
             // until Websupport terminates it during a large admin rescan.
-            const capiPurchase = parsePurchaseMail({ html, plain, orderNumber, orderedAt, products });
+            let capiPurchase = parsePurchaseMail({ html, plain, orderNumber, orderedAt, products });
+            let capiRetry = false;
+            const age = Date.now() - new Date(orderedAt).getTime();
+            if (age >= 0 && age <= 7 * 86400000 && capiPurchase.contents.some(item => !item.id)) {
+              try { capiPurchase = await resolvePurchaseIds(capiPurchase); }
+              catch { capiRetry = true; console.warn('CAPI product IDs unavailable; mail retained for retry'); }
+            }
             // Persist before marking the message seen, so restart cannot lose a Purchase.
             const capiResult = await enqueuePurchase(pool, capiPurchase);
             if (!capiResult.queued && capiResult.reason !== 'duplicate') console.warn('CAPI purchase skipped:', capiResult.reason);
@@ -768,7 +776,7 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
             // Never issue another IMAP command inside the active fetch stream.
             // ImapFlow can deadlock when messageFlagsAdd runs before the fetch
             // iterator finishes. Collect UIDs and mark them afterwards.
-            if (!msg.flags?.has('\\Seen')) {
+            if (!capiRetry && !msg.flags?.has('\\Seen')) {
               seenUids.push(msg.uid);
             }
           } else {
