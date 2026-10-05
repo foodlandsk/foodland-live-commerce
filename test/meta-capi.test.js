@@ -18,8 +18,8 @@ test('real CreativeSites nested layout: ordered quantity, row totals and custome
   assert.equal(orderedAt.toISOString(),'2026-09-16T06:13:07.000Z');
   const purchase=parsePurchaseMail({html,orderedAt,orderNumber:'202618457',products});
   assert.deepEqual(purchase.contents.map(x=>x.id),[null,null]);
-  const resolved=await resolvePurchaseIds(purchase,async url=>({ok:true,text:async()=>`<script>gtag("event", "view_item", ${JSON.stringify({items:[{item_id:url.includes('udon-')?'FL_379':'FL_50'}]})});</script>`}));
-  assert.deepEqual(resolved.contents,[{id:'FL_50',quantity:1,item_price:2.02},{id:'FL_379',quantity:2,item_price:0.83}]);
+  const resolved=await resolvePurchaseIds(purchase,async url=>({ok:true,text:async()=>`<script>gtag("event", "view_item", ${JSON.stringify({items:[{item_id:url.includes('udon-')?'FL_379':'FL_356'}]})});</script>`}));
+  assert.deepEqual(resolved.contents,[{id:'FL_356',quantity:1,item_price:2.02},{id:'FL_379',quantity:2,item_price:0.83}]);
   assert.equal(purchase.value,3.70);
   const event=buildPurchase(resolved,new Date('2026-09-16T06:14:00Z').getTime());
   assert.equal(event.custom_data.num_items,3);
