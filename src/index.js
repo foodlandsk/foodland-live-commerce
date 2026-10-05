@@ -760,16 +760,21 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
             // Store parsed data in memory and close IMAP before making product
             // page HTTP requests. This prevents the mailbox socket from idling
             // until Websupport terminates it during a large admin rescan.
-            let capiPurchase = parsePurchaseMail({ html, plain, orderNumber, orderedAt, products });
             let capiRetry = false;
+            const capiStartAt = new Date(process.env.META_CAPI_START_AT || '').getTime();
             const age = Date.now() - new Date(orderedAt).getTime();
-            if (age >= 0 && age <= 7 * 86400000 && capiPurchase.contents.some(item => !item.id)) {
-              try { capiPurchase = await resolvePurchaseIds(capiPurchase); }
-              catch { capiRetry = true; console.warn('CAPI product IDs unavailable; mail retained for retry'); }
+            // Skip pre-activation CAPI work before network lookups. Live widget
+            // history still updates, but a rescan cannot replay old purchases.
+            if (!Number.isFinite(capiStartAt) || new Date(orderedAt).getTime() >= capiStartAt) {
+              let capiPurchase = parsePurchaseMail({ html, plain, orderNumber, orderedAt, products });
+              if (age >= 0 && age <= 7 * 86400000 && capiPurchase.contents.some(item => !item.id)) {
+                try { capiPurchase = await resolvePurchaseIds(capiPurchase); }
+                catch { capiRetry = true; console.warn('CAPI product IDs unavailable; mail retained for retry'); }
+              }
+              // Persist before marking seen, so restart cannot lose a Purchase.
+              const capiResult = await enqueuePurchase(pool, capiPurchase);
+              if (!capiResult.queued && capiResult.reason !== 'duplicate') console.warn('CAPI purchase skipped:', capiResult.reason);
             }
-            // Persist before marking the message seen, so restart cannot lose a Purchase.
-            const capiResult = await enqueuePurchase(pool, capiPurchase);
-            if (!capiResult.queued && capiResult.reason !== 'duplicate') console.warn('CAPI purchase skipped:', capiResult.reason);
             pendingOrders.push({ orderNumber, orderedAt, products });
             scanStatus.pending_orders = pendingOrders.length;
 
