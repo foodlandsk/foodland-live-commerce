@@ -149,7 +149,7 @@ test('Infowidget JavaScript is served and contains the multilingual client', asy
   assert.match(body, /vn\.foodland\.sk/);
   assert.match(body, /MutationObserver/);
   assert.match(body, /__foodlandLiveCommerceStarted/);
-  assert.equal(VERSION, '1.6.0');
+  assert.equal(VERSION, '1.7.0');
 });
 
 test('Infowidget dict translates every data-fl-live-copy key in every language', async (t) => {

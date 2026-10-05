@@ -8,10 +8,11 @@ import * as cheerio from 'cheerio';
 import pg from 'pg';
 import { pathToFileURL } from 'url';
 import { buildTranslations, fetchNajnakupReviews, localizeReview, REVIEW_LANGUAGES } from './reviews.js';
+import { initCapi, parsePurchaseMail, enqueuePurchase, drainCapi, DATASET_ID } from './meta-capi.js';
 
 const { Pool } = pg;
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 
 const PORT = Number(process.env.PORT || 3000);
 const POLL_SECONDS = Math.max(30, Number(process.env.POLL_SECONDS || 60));
@@ -130,6 +131,7 @@ async function initDb() {
     INSERT INTO review_sync_state (singleton) VALUES (TRUE)
     ON CONFLICT (singleton) DO NOTHING;
   `);
+  await initCapi(pool);
 }
 
 let reviewSyncStatus = { running: false, last_result: null };
@@ -756,6 +758,10 @@ async function processMailbox({ unseenOnly = PROCESS_UNSEEN_ONLY, lookbackDays =
             // Store parsed data in memory and close IMAP before making product
             // page HTTP requests. This prevents the mailbox socket from idling
             // until Websupport terminates it during a large admin rescan.
+            const capiPurchase = parsePurchaseMail({ html, plain, orderNumber, orderedAt, products });
+            // Persist before marking the message seen, so restart cannot lose a Purchase.
+            const capiResult = await enqueuePurchase(pool, capiPurchase);
+            if (!capiResult.queued && capiResult.reason !== 'duplicate') console.warn('CAPI purchase skipped:', capiResult.reason);
             pendingOrders.push({ orderNumber, orderedAt, products });
             scanStatus.pending_orders = pendingOrders.length;
 
@@ -820,11 +826,20 @@ app.get('/health', async (_req, res) => {
       pollSeconds: POLL_SECONDS,
       scan: scanStatus,
       reviews: reviewSyncStatus,
+      capi: { dataset: DATASET_ID, enabled: process.env.META_CAPI_ENABLED === 'true', tokenConfigured: Boolean(process.env.META_CAPI_ACCESS_TOKEN) },
       time: new Date().toISOString()
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+app.get('/admin/capi-status', async (req, res) => {
+  if (!ADMIN_TOKEN || req.headers['x-admin-token'] !== ADMIN_TOKEN) return res.status(401).json({ ok: false });
+  try {
+    const { rows } = await pool.query(`SELECT status,COUNT(*)::int AS count,MAX(sent_at) AS last_sent_at FROM meta_capi_outbox GROUP BY status`);
+    res.json({ dataset: DATASET_ID, enabled: process.env.META_CAPI_ENABLED === 'true', tokenConfigured: Boolean(process.env.META_CAPI_ACCESS_TOKEN), states: rows });
+  } catch { res.status(500).json({ ok: false, error: 'capi_status_unavailable' }); }
 });
 
 // Number(req.query.x) is NaN for a non-numeric query param, and NaN survives
@@ -1404,6 +1419,11 @@ app.get('/reviews-widget.js', (_req, res) => {
 
 async function main() {
   await initDb();
+  const runCapi = () => drainCapi(pool).then(result => {
+    if (result.sent) console.log('CAPI purchases accepted:', result.sent);
+  }).catch(() => console.error('CAPI worker failed'));
+  setInterval(runCapi, 30000);
+  setTimeout(runCapi, 10000);
   const nextReviewRefresh = scheduleDailyReviewRefresh();
 
   app.listen(PORT, () => {
