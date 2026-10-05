@@ -85,3 +85,16 @@ test('item ID lookup ignores recommendations and refuses conflicts, missing payl
   await assert.rejects(resolvePurchaseIds({contents:[{id:null,product_url:'https://evil.example/'}]},()=>{throw Error('must not fetch');}),/invalid-product-url/);
   await assert.rejects(resolvePurchaseIds({contents:[{id:null,product_url:'https://www.foodland.sk/p/test/'}]},async()=>({ok:true,text:async()=>'<h1>Missing</h1>'})),/product-id-unavailable/);
 });
+
+test('responsive CreativeSites title row resolves its desktop quantity and line total',()=>{
+  const html='<table class="order_table"><tr class="mobile_display_block_tr"><td><a href="https://www.foodland.sk/p/test/">Test sauce</a><p>Balenie: 1 kus</p></td></tr><tr><td>Test sauce Balenie: 1 kus</td><td>13 ks</td><td>49,53 €</td></tr></table><table><tr><td>Celková suma:</td><td>50,73 €</td></tr></table>';
+  const products=extractProducts(html);
+  assert.equal(products.length,1);
+  assert.equal(products[0].quantity,13);
+  const p=parsePurchaseMail({html,products});
+  assert.equal(p.contents[0].quantity,13);
+  assert.equal(p.contents[0].item_price,3.81);
+  assert.equal(p.value,50.73);
+  const ambiguous=html.replace('</table><table>','<tr><td>Test sauce Balenie: 1 kus</td><td>1 ks</td><td>3,81 €</td></tr></table><table>');
+  assert.equal(parsePurchaseMail({html:ambiguous,products}).contents[0].item_price,null);
+});

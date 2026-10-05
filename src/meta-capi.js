@@ -6,10 +6,19 @@ const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const textOf = ($, node) => $(node).text().replace(/\s+/g, ' ').trim();
 export function purchaseProductRow($, anchor) {
   const rows = $(anchor).parents('tr').toArray();
-  return $(rows.find(row => {
+  const valid = row => {
     const cells = $(row).children('td,th');
     return cells.length === 3 && /^\d+\s*ks$/i.test(textOf($, cells.eq(1))) && money(textOf($, cells.eq(2))) !== null;
-  }) || rows[0]);
+  };
+  const direct = rows.find(valid);
+  if (direct) return $(direct);
+  // Responsive CreativeSites mail puts the linked title in a separate mobile
+  // row. Its order_table also contains the desktop row with actual quantity
+  // and line total. Require one matching row inside this product-only table.
+  const name = textOf($, anchor);
+  const alternatives = $(anchor).closest('table.order_table').find('tr').toArray().filter(row =>
+    valid(row) && name && textOf($, $(row).children('td,th').first()).includes(name));
+  return $(alternatives.length === 1 ? alternatives[0] : rows[0]);
 }
 export function money(value) {
   const raw = String(value ?? '').trim();
