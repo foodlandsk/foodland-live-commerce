@@ -9,6 +9,14 @@ function fixture() {
   const html = `<table><tr data-product-id="FL_356" data-unit-price="2.02"><td><a href="https://www.foodland.sk/p/test/">Test</a></td><td>1 ks</td></tr><tr><td>Celkom k úhrade:</td><td>3,70 EUR</td></tr></table>`;
   return parsePurchaseMail({ html, plain: 'E-mail zákazníka: test@example.com', orderNumber: '202618457', orderedAt: new Date(), products: [{ product_url: 'https://www.foodland.sk/p/test/', quantity: 1 }] });
 }
+test('responsive delivery cell accepts plain-text customer email and excludes shop footer', () => {
+  const html = '<table><tr><td><p><span>Adresa na doručenie:</span></p><div><p><span>customer@example.com</span></p></div></td></tr><tr><td><a href="mailto:shop@example.com">shop@example.com</a></td></tr></table>';
+  const parsed = parsePurchaseMail({html});
+  assert.equal(parsed.user_data.em?.length, 1);
+  assert.deepEqual(parsed.user_data, parsePurchaseMail({plain:'E-mail zákazníka: customer@example.com'}).user_data);
+  assert.deepEqual(parsePurchaseMail({html:html.replace('customer@example.com','customer@example.com other@example.com')}).user_data, {});
+  assert.deepEqual(parsePurchaseMail({html:html.replace('customer@example.com','')}).user_data, {});
+});
 test('real CreativeSites nested layout: ordered quantity, row totals and customer block', async () => {
   const html=fs.readFileSync(new URL('./fixtures/creativesites-order.html',import.meta.url),'utf8');
   const $=cheerio.load(html);

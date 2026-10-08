@@ -47,7 +47,18 @@ export function parsePurchaseMail({ html = '', plain = '', orderNumber, orderedA
   const uniqueTotals = [...new Set(totals)];
   const addressRows = $('tr').filter((_, row) => /^Adresa na doručenie\s*:$/i.test(textOf($, $(row).children('td,th').first())));
   const customerEmails = addressRows.find('a[href^="mailto:"]').map((_, a) => $(a).attr('href').slice(7).split('?')[0].trim().toLowerCase()).get();
-  const email = [...new Set(customerEmails)].length === 1 ? customerEmails[0] : body.match(/(?:e-?mail zákazníka|zákaznícky e-?mail|e-?mail)\s*:\s*([^\s<>]+@[^\s<>]+)/i)?.[1]?.trim().toLowerCase();
+  // Current responsive template puts the heading and a plain-text email in
+  // one address cell, rather than a labelled two-column row with mailto.
+  const labels = $('*').filter((_, node) => $(node).children().length === 0 && /^Adresa na doručenie\s*:$/i.test(textOf($, node)));
+  labels.each((_, label) => {
+    const cell = $(label).closest('td,th');
+    // A layout cell covering both addresses/footer is not a customer field.
+    const text = textOf($, cell);
+    if (/Adresa na fakturáciu|Fakturačná adresa|Máte otázky/i.test(text)) return;
+    customerEmails.push(...(text.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map(x => x.toLowerCase()));
+  });
+  const uniqueEmails = [...new Set(customerEmails)];
+  const email = uniqueEmails.length === 1 ? uniqueEmails[0] : uniqueEmails.length > 1 ? null : body.match(/(?:e-?mail zákazníka|zákaznícky e-?mail|e-?mail)\s*:\s*([^\s<>]+@[^\s<>]+)/i)?.[1]?.trim().toLowerCase();
   const user_data = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? { em: [hash(email)] } : {};
   const contents = products.map(product => {
     const anchors = $('a[href]').filter((_, a) => $(a).attr('href') === product.product_url);
