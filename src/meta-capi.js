@@ -47,9 +47,12 @@ export function parsePurchaseMail({ html = '', plain = '', orderNumber, orderedA
   const uniqueTotals = [...new Set(totals)];
   const addressRows = $('tr').filter((_, row) => /^Adresa na doručenie\s*:$/i.test(textOf($, $(row).children('td,th').first())));
   const customerEmails = addressRows.find('a[href^="mailto:"]').map((_, a) => $(a).attr('href').slice(7).split('?')[0].trim().toLowerCase()).get();
+  addressRows.each((_, row) => {
+    customerEmails.push(...(textOf($, row).match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map(x => x.toLowerCase()));
+  });
   // Current responsive template puts the heading and a plain-text email in
   // one address cell, rather than a labelled two-column row with mailto.
-  const labels = $('*').filter((_, node) => $(node).children().length === 0 && /^Adresa na doručenie\s*:$/i.test(textOf($, node)));
+  const labels = $('*').filter((_, node) => /^Adresa na doručenie\s*:$/i.test(textOf($, node)));
   labels.each((_, label) => {
     const cell = $(label).closest('td,th');
     // A layout cell covering both addresses/footer is not a customer field.

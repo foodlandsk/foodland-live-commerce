@@ -16,6 +16,8 @@ test('responsive delivery cell accepts plain-text customer email and excludes sh
   assert.deepEqual(parsed.user_data, parsePurchaseMail({plain:'E-mail zákazníka: customer@example.com'}).user_data);
   assert.deepEqual(parsePurchaseMail({html:html.replace('customer@example.com','customer@example.com other@example.com')}).user_data, {});
   assert.deepEqual(parsePurchaseMail({html:html.replace('customer@example.com','')}).user_data, {});
+  const plainRow = '<table><tr><td>Adresa na doručenie:</td><td>Test customer<br>customer@example.com</td></tr><tr><td>Footer shop@example.com</td></tr></table>';
+  assert.deepEqual(parsePurchaseMail({html:plainRow}).user_data, parsed.user_data);
 });
 test('real CreativeSites nested layout: ordered quantity, row totals and customer block', async () => {
   const html=fs.readFileSync(new URL('./fixtures/creativesites-order.html',import.meta.url),'utf8');
