@@ -166,17 +166,10 @@ async function refreshCustomerReviews() {
         `, [review.source_key, review.name, review.date, review.text, JSON.stringify(translations[review.source_key]), review.recommended, review.customer_type, position]);
       }
 
-      // The foodland-express-proxy source (the normal, preferred path) never
-      // reports recommendation_percent/total_reviews at all — only the
-      // least-preferred direct-scrape fallback (parseNajnakupPage) extracts
-      // those from NajNakup's page text. Under normal operation this left
-      // the public /api/reviews stats permanently null, which the widget
-      // then displayed as a hardcoded "98%" and a broken-looking "0
-      // hodnotení celkom". When the source didn't supply real stats,
-      // compute them from our own accumulated reviews instead of leaving
-      // them null: not NajNakup's official site-wide total, but a real,
-      // truthful, growing number instead of a placeholder.
-      if (!stats.recommendation_percent || !stats.total_reviews) {
+      // A positive source total distinguishes official statistics (including
+      // a valid 0% recommendation rate) from parsers that supply zero totals
+      // when statistics are unavailable. In that case use the stored sample.
+      if (!stats.total_reviews) {
         const { rows: [computed] } = await client.query(`
           SELECT
             COUNT(*)::int AS total_reviews,
@@ -186,17 +179,17 @@ async function refreshCustomerReviews() {
           FROM customer_reviews
         `);
         stats = {
-          recommendation_percent: stats.recommendation_percent || computed.recommendation_percent || 0,
-          recommendation_90d_percent: stats.recommendation_90d_percent || computed.recommendation_90d_percent || 0,
-          total_reviews: stats.total_reviews || computed.total_reviews || 0
+          recommendation_percent: computed.recommendation_percent,
+          recommendation_90d_percent: computed.recommendation_90d_percent,
+          total_reviews: computed.total_reviews
         };
       }
 
       await client.query(`
         UPDATE review_sync_state SET
-          recommendation_percent=COALESCE(NULLIF($1,0), recommendation_percent),
-          recommendation_90d_percent=COALESCE(NULLIF($2,0), recommendation_90d_percent),
-          total_reviews=COALESCE(NULLIF($3,0), total_reviews),
+          recommendation_percent=$1,
+          recommendation_90d_percent=$2,
+          total_reviews=$3,
           last_success_at=NOW(),
           last_error=NULL
         WHERE singleton=TRUE
@@ -909,7 +902,7 @@ app.get('/api/reviews', async (req, res) => {
     const language = requestedLanguage === 'cs'
       ? 'cz'
       : (REVIEW_LANGUAGES.includes(requestedLanguage) ? requestedLanguage : 'sk');
-    const limit = Math.min(30, Math.max(1, Number(req.query.limit || 30)));
+    const limit = clampInt(req.query.limit, 30, 1, 30);
     const [reviewsResult, stateResult] = await Promise.all([
       pool.query(`
         SELECT customer_name, TO_CHAR(review_date, 'DD.MM.YYYY') AS review_date,
@@ -1239,6 +1232,8 @@ app.get('/widget.js', (_req, res) => {
           : fetch(api + '/api/live/summary', { cache: 'no-store' })
       ]);
 
+      if (!recentRes.ok) throw new Error('Live recent HTTP ' + recentRes.status);
+      if (summaryRes && !summaryRes.ok) throw new Error('Live summary HTTP ' + summaryRes.status);
       const recent = (await recentRes.json()).items || [];
       const summary = summaryRes ? (await summaryRes.json()).items || [] : [];
 
@@ -1387,7 +1382,7 @@ app.get('/reviews-widget.js', (_req, res) => {
         window.foodlandSlideReviews = function(direction) { page += direction; render(); };
         var onResize = function () { var next=window.innerWidth<=768?1:3; if(next!==perPage){perPage=next;page=0;render();} };
         window.addEventListener('resize', onResize);
-        var values={p:data.recommendation_percent||98,n:items.length,t:Number(data.total_reviews||0).toLocaleString(lang==='cz'?'cs-CZ':lang),d:data.updated_at?new Date(data.updated_at).toLocaleDateString(lang==='cz'?'cs-CZ':lang):''};
+        var values={p:data.recommendation_percent == null ? '—' : data.recommendation_percent,n:items.length,t:Number(data.total_reviews||0).toLocaleString(lang==='cz'?'cs-CZ':lang),d:data.updated_at?new Date(data.updated_at).toLocaleDateString(lang==='cz'?'cs-CZ':lang):''};
         if(title) setBrandedText(title, '⭐ NajNakup.sk • '+fill(c.title,values)); if(updated) updated.textContent=fill(c.updated,values);
         render();
       }).catch(function (error) {
@@ -1460,3 +1455,4 @@ export {
   saveOrder,
   VERSION
 };
+
