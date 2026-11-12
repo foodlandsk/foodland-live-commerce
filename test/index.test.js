@@ -426,8 +426,9 @@ test('review stats fall back to a value computed from stored reviews when the so
   // it computed total_reviews=10, recommendation_percent=70,
   // recommendation_90d_percent=75 — exactly as expected.
   const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/index.js', import.meta.url), 'utf8'));
-  assert.match(source, /if \(!stats\.recommendation_percent \|\| !stats\.total_reviews\)/);
+  assert.match(source, /if \(!stats\.total_reviews\)/);
   assert.match(source, /COUNT\(\*\)::int AS total_reviews/);
   assert.match(source, /ROUND\(100\.0 \* COUNT\(\*\) FILTER \(WHERE recommended\) \/ NULLIF\(COUNT\(\*\), 0\)\)::int AS recommendation_percent/);
   assert.match(source, /review_date >= CURRENT_DATE - INTERVAL '90 days'/);
 });
+
